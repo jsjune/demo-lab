@@ -8,7 +8,7 @@ import org.example.common.TraceEventType;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Global entry point for all instrumented code.
@@ -40,6 +40,8 @@ public class TraceRuntime {
      *
      * <p>Called from injected bytecode in DispatcherServletAdvice — must remain public static.
      */
+    private static final AtomicLong EVENT_SEQ = new AtomicLong(0);
+
     // Cache getAttribute(String) Method per ClassLoader (keyed on the interface, stable per CL).
     private static final java.util.concurrent.ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
         GET_ATTR_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
@@ -278,52 +280,64 @@ public class TraceRuntime {
         });
     }
 
-    public static void onDbQueryStart(String sql) {
-        debugLog("[DB] START " + sqlPreview(sql));
-        emit(TraceEventType.DB_QUERY_START, TraceCategory.DB, truncate(sql), null, true, null);
+    public static void onDbQueryStart(String sql, String dbHost) {
+        safeRun(() -> {
+            debugLog("[DB] START " + sqlPreview(sql));
+            Map<String, Object> extra = new HashMap<>();
+            extra.put("sql", truncate(sql));
+            emit(TraceEventType.DB_QUERY_START, TraceCategory.DB, dbHost != null ? dbHost : "unknown-db", null, true, extra);
+        });
     }
 
     /**
      * Called on normal return from a JDBC PreparedStatement execute method.
      *
-     * <p>Bytecode ABI: (Ljava/lang/String;J)V
+     * <p>Bytecode ABI: (Ljava/lang/String;JLjava/lang/String;)V
+     *
+     * <p>NOTE: TxIdHolder is NOT cleared here.
+     * DB/Cache/IO events are sub-operations within an active transaction.
+     * The transaction entry points (onHttpInEnd / onMqConsumeEnd / onMqConsumeError)
+     * are responsible for calling TxIdHolder.clear() when the request completes.
      */
-    public static void onDbQueryEnd(String sql, long durationMs) {
+    public static void onDbQueryEnd(String sql, long durationMs, String dbHost) {
         safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;
-            Map<String, Object> extra = null;
+            Map<String, Object> extra = new HashMap<>();
+            extra.put("sql", truncate(sql));
             if (durationMs > AgentConfig.getSlowQueryMs()) {
-                extra = new HashMap<>();
                 extra.put("slowQuery", true);
-                extra.put("sql", truncate(sql));
                 AgentLogger.warn("[DB] SLOW " + durationMs + "ms — " + sqlPreview(sql));
             } else {
                 debugLog("[DB] END " + durationMs + "ms — " + sqlPreview(sql));
             }
-            TcpSender.send(createEvent(txId, TraceEventType.DB_QUERY_END, TraceCategory.DB, truncate(sql), durationMs, true, extra));
+            String target = dbHost != null && !dbHost.isEmpty() ? dbHost : "unknown-db";
+            TcpSender.send(createEvent(txId, TraceEventType.DB_QUERY_END, TraceCategory.DB, target, durationMs, true, extra));
         });
     }
 
     /**
      * Called when a JDBC PreparedStatement execute method exits via an uncaught exception.
      *
-     * <p>Bytecode ABI: (Ljava/lang/Throwable;Ljava/lang/String;J)V
+     * <p>Bytecode ABI: (Ljava/lang/Throwable;Ljava/lang/String;JLjava/lang/String;)V
      */
-    public static void onDbQueryError(Throwable t, String sql, long durationMs) {
+    public static void onDbQueryError(Throwable t, String sql, long durationMs, String dbHost) {
         safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;
             Map<String, Object> extra = new LinkedHashMap<>();
+            extra.put("sql", truncate(sql));
             extra.put("errorType", t != null ? t.getClass().getSimpleName() : "UnknownError");
             extra.put("errorMessage", t != null ? truncateMessage(t.getMessage()) : null);
             debugLog("[DB] ERROR " + durationMs + "ms "
                 + (t != null ? t.getClass().getSimpleName() : "?")
                 + " — " + sqlPreview(sql));
-            TcpSender.send(createEvent(txId, TraceEventType.DB_QUERY_END, TraceCategory.DB, truncate(sql), durationMs, false, extra));
+            String target = dbHost != null && !dbHost.isEmpty() ? dbHost : "unknown-db";
+            TcpSender.send(createEvent(txId, TraceEventType.DB_QUERY_END, TraceCategory.DB, target, durationMs, false, extra));
         });
     }
 
+    // NOTE: TxIdHolder is NOT cleared here — see onDbQueryEnd for explanation.
     public static void onFileRead(String path, long sizeBytes, long durationMs, boolean success) {
         safeRun(() -> {
             String txId = TxIdHolder.get();
@@ -348,19 +362,26 @@ public class TraceRuntime {
         });
     }
 
+    // NOTE: TxIdHolder is NOT cleared here — see onDbQueryEnd for explanation.
     public static void onCacheGet(String key, boolean hit) {
-        debugLog("[CACHE] GET " + key + " → " + (hit ? "HIT" : "MISS"));
-        emit(hit ? TraceEventType.CACHE_HIT : TraceEventType.CACHE_MISS, TraceCategory.CACHE, key, null, true, null);
+        safeRun(() -> {
+            debugLog("[CACHE] GET " + key + " → " + (hit ? "HIT" : "MISS"));
+            emit(hit ? TraceEventType.CACHE_HIT : TraceEventType.CACHE_MISS, TraceCategory.CACHE, key, null, true, null);
+        });
     }
 
     public static void onCacheSet(String key) {
-        debugLog("[CACHE] SET " + key);
-        emit(TraceEventType.CACHE_SET, TraceCategory.CACHE, key, null, true, null);
+        safeRun(() -> {
+            debugLog("[CACHE] SET " + key);
+            emit(TraceEventType.CACHE_SET, TraceCategory.CACHE, key, null, true, null);
+        });
     }
 
     public static void onCacheDel(String key) {
-        debugLog("[CACHE] DEL " + key);
-        emit(TraceEventType.CACHE_DEL, TraceCategory.CACHE, key, null, true, null);
+        safeRun(() -> {
+            debugLog("[CACHE] DEL " + key);
+            emit(TraceEventType.CACHE_DEL, TraceCategory.CACHE, key, null, true, null);
+        });
     }
 
     /**
@@ -513,7 +534,7 @@ public class TraceRuntime {
                                           String target, Long durationMs, boolean success,
                                           Map<String, Object> extraInfo) {
         return new TraceEvent(
-            UUID.randomUUID().toString(),
+            AgentConfig.getServerName() + "-" + EVENT_SEQ.incrementAndGet(),
             txId,
             type,
             category,
@@ -558,5 +579,18 @@ public class TraceRuntime {
         return trimmed.length() <= SQL_PREVIEW_LENGTH
             ? trimmed
             : trimmed.substring(0, SQL_PREVIEW_LENGTH) + "...";
+    }
+
+    public static String safeKeyToString(Object key) {
+        if (key == null) return null;
+        if (key instanceof byte[]) {
+            byte[] bytes = (byte[]) key;
+            try {
+                return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+            } catch (Exception e) {
+                return "[bytes:" + bytes.length + "]";
+            }
+        }
+        return String.valueOf(key);
     }
 }

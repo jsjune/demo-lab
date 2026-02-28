@@ -34,7 +34,7 @@ public class AgentConfig {
         }
     }
 
-    public static void init() {
+    public static synchronized void init() {
         // 1) External config file override: -Dtrace.agent.config=/path/to/file.properties
         String externalConfig = System.getProperty("trace.agent.config");
         if (externalConfig != null && !externalConfig.isEmpty()) {

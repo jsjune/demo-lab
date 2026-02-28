@@ -37,6 +37,7 @@ out/
 .vscode/
 .bkit
 .claude
+.gemini
 GEMINI.md
 CLAUDE.md
 docs

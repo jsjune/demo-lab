@@ -49,7 +49,7 @@ class TraceRuntimeTest {
         String txId = "db-tx-1";
         TxIdHolder.set(txId);
         
-        TraceRuntime.onDbQueryEnd("SELECT * FROM users", 100L);
+        TraceRuntime.onDbQueryEnd("SELECT * FROM users", 100L, "h2://mem:testdb");
 
         tcpSenderMock.verify(() -> TcpSender.send(argThat(event -> 
             event.txId().equals(txId) && event.type() == TraceEventType.DB_QUERY_END
@@ -82,6 +82,46 @@ class TraceRuntimeTest {
             event.txId().equals(txId) && event.type() == TraceEventType.MQ_CONSUME_END
         )));
         assertNull(TxIdHolder.get(), "TxId should be cleared after onMqConsumeEnd");
+    }
+
+    // -----------------------------------------------------------------------
+    // safeKeyToString() 테스트 (FR-05)
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("safeKeyToString: 캐시 키 안전 변환")
+    class SafeKeyToStringTest {
+
+        @Test
+        @DisplayName("null 입력 시 null을 반환해야 한다")
+        void nullInput_returnsNull() {
+            assertNull(TraceRuntime.safeKeyToString(null));
+        }
+
+        @Test
+        @DisplayName("byte[] 입력 시 UTF-8 문자열로 변환해야 한다")
+        void byteArrayInput_returnsUtf8String() {
+            byte[] key = "user:1001".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            assertEquals("user:1001", TraceRuntime.safeKeyToString(key));
+        }
+
+        @Test
+        @DisplayName("빈 byte[] 입력 시 빈 문자열을 반환해야 한다")
+        void emptyByteArray_returnsEmptyString() {
+            assertEquals("", TraceRuntime.safeKeyToString(new byte[0]));
+        }
+
+        @Test
+        @DisplayName("String 입력 시 그대로 반환해야 한다")
+        void stringInput_returnsAsIs() {
+            assertEquals("session:abc", TraceRuntime.safeKeyToString("session:abc"));
+        }
+
+        @Test
+        @DisplayName("String 이외의 객체 입력 시 String.valueOf 결과를 반환해야 한다")
+        void integerInput_returnsStringValueOf() {
+            assertEquals("42", TraceRuntime.safeKeyToString(42));
+        }
     }
 
     // -----------------------------------------------------------------------

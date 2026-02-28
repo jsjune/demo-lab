@@ -14,6 +14,7 @@ import java.lang.instrument.ClassFileTransformer;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -44,12 +45,19 @@ class JdbcAgentIntegrationTest extends ByteBuddyIntegrationTest {
     /**
      * 정상 종료 케이스용.
      * toString()이 sql을 반환하므로 JdbcPlugin.extractSql()에서 SQL 문자열 획득 가능.
+     * jdbcUrl을 지정하면 getConnection() 체인을 통해 extractDbHost()가 실제 host를 반환한다.
      */
     public static class FakePreparedStatement {
         private final String sql;
+        private final String jdbcUrl;
 
         public FakePreparedStatement(String sql) {
+            this(sql, null);
+        }
+
+        public FakePreparedStatement(String sql, String jdbcUrl) {
             this.sql = sql;
+            this.jdbcUrl = jdbcUrl;
         }
 
         /** JdbcStatementAdvice 주입 대상: descriptor "()Z" → startsWith("()") 통과 */
@@ -62,9 +70,39 @@ class JdbcAgentIntegrationTest extends ByteBuddyIntegrationTest {
             return null;
         }
 
+        /** jdbcUrl null이면 null 반환 → extractDbHost "unknown-db" 경로 */
+        public FakeDbConnection getConnection() {
+            if (jdbcUrl == null) return null;
+            return new FakeDbConnection(jdbcUrl);
+        }
+
         @Override
         public String toString() {
             return sql;
+        }
+    }
+
+    public static class FakeDbConnection {
+        private final String url;
+
+        public FakeDbConnection(String url) {
+            this.url = url;
+        }
+
+        public FakeDbMeta getMetaData() {
+            return new FakeDbMeta(url);
+        }
+    }
+
+    public static class FakeDbMeta {
+        private final String url;
+
+        public FakeDbMeta(String url) {
+            this.url = url;
+        }
+
+        public String getURL() {
+            return url;
         }
     }
 
@@ -120,15 +158,15 @@ class JdbcAgentIntegrationTest extends ByteBuddyIntegrationTest {
             method.invoke(instance);
 
             mock.verify(
-                () -> TraceRuntime.onDbQueryStart(eq("SELECT 1")),
+                () -> TraceRuntime.onDbQueryStart(eq("SELECT 1"), anyString()),
                 times(1)
             );
             mock.verify(
-                () -> TraceRuntime.onDbQueryEnd(eq("SELECT 1"), anyLong()),
+                () -> TraceRuntime.onDbQueryEnd(eq("SELECT 1"), anyLong(), anyString()),
                 times(1)
             );
             mock.verify(
-                () -> TraceRuntime.onDbQueryError(any(), anyString(), anyLong()),
+                () -> TraceRuntime.onDbQueryError(any(), anyString(), anyLong(), anyString()),
                 never()
             );
         }
@@ -150,16 +188,16 @@ class JdbcAgentIntegrationTest extends ByteBuddyIntegrationTest {
             assertThrows(InvocationTargetException.class, () -> method.invoke(instance));
 
             mock.verify(
-                () -> TraceRuntime.onDbQueryStart(anyString()),
+                () -> TraceRuntime.onDbQueryStart(anyString(), anyString()),
                 times(1)
             );
             mock.verify(
                 () -> TraceRuntime.onDbQueryError(
-                    any(RuntimeException.class), anyString(), anyLong()),
+                    any(RuntimeException.class), anyString(), anyLong(), anyString()),
                 times(1)
             );
             mock.verify(
-                () -> TraceRuntime.onDbQueryEnd(anyString(), anyLong()),
+                () -> TraceRuntime.onDbQueryEnd(anyString(), anyLong(), anyString()),
                 never()
             );
         }
@@ -180,11 +218,11 @@ class JdbcAgentIntegrationTest extends ByteBuddyIntegrationTest {
             method.invoke(instance);
 
             mock.verify(
-                () -> TraceRuntime.onDbQueryStart(eq("SELECT name FROM users")),
+                () -> TraceRuntime.onDbQueryStart(eq("SELECT name FROM users"), anyString()),
                 times(1)
             );
             mock.verify(
-                () -> TraceRuntime.onDbQueryEnd(eq("SELECT name FROM users"), anyLong()),
+                () -> TraceRuntime.onDbQueryEnd(eq("SELECT name FROM users"), anyLong(), anyString()),
                 times(1)
             );
         }
@@ -205,12 +243,70 @@ class JdbcAgentIntegrationTest extends ByteBuddyIntegrationTest {
             method.invoke(instance);
 
             mock.verify(
-                () -> TraceRuntime.onDbQueryStart(anyString()),
+                () -> TraceRuntime.onDbQueryStart(anyString(), anyString()),
                 never()
             );
             mock.verify(
-                () -> TraceRuntime.onDbQueryEnd(anyString(), anyLong()),
+                () -> TraceRuntime.onDbQueryEnd(anyString(), anyLong(), anyString()),
                 never()
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // parseDbHost 직접 단위 테스트
+    // -----------------------------------------------------------------------
+
+    @Test
+    @DisplayName("parseDbHost: h2 embedded URL은 scheme:rest 형식을 반환해야 한다")
+    void parseDbHost_h2임베디드_schemeAndRest() {
+        assertEquals("h2:mem:testdb", JdbcPlugin.parseDbHost("jdbc:h2:mem:testdb"));
+    }
+
+    @Test
+    @DisplayName("parseDbHost: mysql 네트워크 URL은 scheme://host:port를 반환해야 한다")
+    void parseDbHost_mysql네트워크_schemeHostPort() {
+        assertEquals("mysql://localhost:3306", JdbcPlugin.parseDbHost("jdbc:mysql://localhost:3306/mydb"));
+    }
+
+    @Test
+    @DisplayName("parseDbHost: credential 포함 mysql URL에서 user:pass@를 제거해야 한다")
+    void parseDbHost_mysql크리덴셜포함_크리덴셜제거() {
+        assertEquals("mysql://prod-db:3306", JdbcPlugin.parseDbHost("jdbc:mysql://user:pass@prod-db:3306/orders"));
+    }
+
+    @Test
+    @DisplayName("parseDbHost: postgresql URL은 scheme://host를 반환해야 한다")
+    void parseDbHost_postgresql_schemeAndHost() {
+        assertEquals("postgresql://db.example.com", JdbcPlugin.parseDbHost("jdbc:postgresql://db.example.com/myapp"));
+    }
+
+    // -----------------------------------------------------------------------
+    // extractDbHost reflection 체인 검증 — FakePreparedStatement(sql, jdbcUrl)
+    // -----------------------------------------------------------------------
+
+    @Test
+    @DisplayName("execute 정상 종료 시 jdbcUrl이 있으면 실제 dbHost 값으로 onDbQueryEnd가 호출되어야 한다")
+    void execute_jdbcUrl있음_실제dbHost검증() throws Exception {
+        JdbcPlugin plugin = new JdbcPlugin();
+        ClassFileTransformer transformer = plugin.transformers().get(0);
+        Class<?> cls = transformAndLoad(FakePreparedStatement.class, transformer);
+
+        Object instance = cls.getDeclaredConstructor(String.class, String.class)
+            .newInstance("SELECT 1", "jdbc:mysql://localhost:3306/testdb");
+        Method method = cls.getDeclaredMethod("execute");
+        method.setAccessible(true);
+
+        try (MockedStatic<TraceRuntime> mock = mockStatic(TraceRuntime.class)) {
+            method.invoke(instance);
+
+            mock.verify(
+                () -> TraceRuntime.onDbQueryStart(eq("SELECT 1"), eq("mysql://localhost:3306")),
+                times(1)
+            );
+            mock.verify(
+                () -> TraceRuntime.onDbQueryEnd(eq("SELECT 1"), anyLong(), eq("mysql://localhost:3306")),
+                times(1)
             );
         }
     }

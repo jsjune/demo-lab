@@ -31,21 +31,29 @@ class TxIdHolderTest {
     }
 
     @Test
-    @DisplayName("트랜잭션 ID는 자식 스레드에 상속되어야 한다 (InheritableThreadLocal)")
-    void testInheritanceInChildThread() throws InterruptedException {
+    @DisplayName("자식 스레드는 부모의 txId를 상속받지 않아야 한다 (ThreadLocal — 스레드 풀 오염 방지)")
+    void testNoInheritanceInChildThread() throws InterruptedException {
         String parentId = "parent-id-555";
         TxIdHolder.set(parentId);
 
+        // AtomicReference로 자식 스레드 예외를 JUnit에 전파
+        java.util.concurrent.atomic.AtomicReference<AssertionError> childError =
+            new java.util.concurrent.atomic.AtomicReference<>();
+
         Thread childThread = new Thread(() -> {
-            assertEquals(parentId, TxIdHolder.get(), "Child thread should inherit txId from parent (InheritableThreadLocal)");
-            
-            TxIdHolder.set("child-id-777");
-            assertEquals("child-id-777", TxIdHolder.get(), "Child thread should be able to set its own txId");
+            try {
+                assertNull(TxIdHolder.get(), "Child thread must NOT inherit txId — ThreadLocal isolates threads");
+                TxIdHolder.set("child-id-777");
+                assertEquals("child-id-777", TxIdHolder.get(), "Child thread should be able to set its own txId");
+            } catch (AssertionError e) {
+                childError.set(e);
+            }
         });
 
         childThread.start();
         childThread.join();
 
-        assertEquals(parentId, TxIdHolder.get(), "Parent thread's txId should remain unchanged by child's modifications");
+        if (childError.get() != null) throw childError.get();
+        assertEquals(parentId, TxIdHolder.get(), "Parent thread's txId should remain unchanged");
     }
 }

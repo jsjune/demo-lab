@@ -8,7 +8,7 @@ public class TxIdGenerator {
 
     public static String generate() {
         String serverName = AgentConfig.getServerName();
-        return serverName + "-" + System.currentTimeMillis() + "-" + ThreadLocalRandom.current().nextInt(1000, 9999);
+        return serverName + "-" + System.currentTimeMillis() + "-" + ThreadLocalRandom.current().nextLong(Long.MAX_VALUE);
     }
 
     /**

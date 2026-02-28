@@ -45,6 +45,12 @@ public class CompositeTransformer implements ClassFileTransformer {
     }
 
     public void addTargetPrefixes(List<String> prefixes) {
+        for (String prefix : prefixes) {
+            if (prefix.length() <= 1) {
+                AgentLogger.warn("[INSTRUMENT] Near-global scan prefix registered: '"
+                    + prefix + "' — all loaded classes will be scanned (ignore list still applies for non-explicit matches).");
+            }
+        }
         targetPrefixes.addAll(prefixes);
     }
 

@@ -3,77 +3,177 @@
 <body>
 <section>
 
-    <!-- ── Header card ─────────────────────────────── -->
+    <style>
+        /* Professional Gantt UI */
+        .gantt-outer-container {
+            background: #fff;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 2rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
+        }
+        .gantt-header-sticky {
+            display: flex;
+            background: #f8fafc;
+            border-bottom: 2px solid var(--border-color);
+            height: 40px;
+            align-items: center;
+            font-weight: 700;
+            color: #475569;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .col-label-header {
+            flex: 0 0 300px;
+            padding: 0 1.25rem;
+            border-right: 1px solid var(--border-color);
+        }
+        .col-timeline-header {
+            flex: 1;
+            position: relative;
+            height: 100%;
+        }
+        .ruler-tick {
+            position: absolute;
+            top: 12px;
+            transform: translateX(-50%);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem;
+            color: #94a3b8;
+        }
+        .server-divider {
+            padding: 0.75rem 1.25rem;
+            background: #f1f5f9;
+            border-bottom: 1px solid var(--border-color);
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-weight: 800;
+            color: #1e293b;
+            font-size: 0.75rem;
+        }
+        .server-divider:first-of-type { border-top: none; }
+        .badge-svc {
+            background: var(--primary-color);
+            color: #fff;
+            padding: 2px 10px;
+            border-radius: 6px;
+            font-size: 0.65rem;
+            box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
+        }
+        .gantt-row {
+            display: flex;
+            height: 36px;
+            border-bottom: 1px solid #f1f5f9;
+            transition: background 0.15s;
+        }
+        .gantt-row:hover { background: #f8fafc; }
+        .gantt-row:last-child { border-bottom: none; }
+
+        .cell-label {
+            flex: 0 0 300px;
+            padding: 0 1.25rem;
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            overflow: hidden;
+            background: inherit;
+        }
+        .txt-op {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #334155;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .cell-timeline {
+            flex: 1;
+            position: relative;
+            padding-right: 60px; /* Space for labels at the end */
+            background-image: linear-gradient(to right, #f1f5f9 1px, transparent 1px);
+            background-size: 20% 100%;
+        }
+        .bar-item {
+            position: absolute;
+            height: 18px;
+            top: 9px;
+            border-radius: 5px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            cursor: pointer;
+            z-index: 10;
+            min-width: 4px;
+        }
+        .marker-item {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            top: 13px;
+            transform: translateX(-50%);
+            box-shadow: 0 0 0 2px #fff, 0 2px 4px rgba(0,0,0,0.2);
+            z-index: 11;
+            cursor: pointer;
+        }
+        .lbl-dur {
+            position: absolute;
+            left: calc(100% + 8px);
+            top: 1px;
+            font-size: 0.65rem;
+            font-weight: 800;
+            color: #64748b;
+            white-space: nowrap;
+        }
+        .dot-cat {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .row-err-gantt { background: #fff1f2 !important; }
+    </style>
+
+    <!-- ── Header ──────────────────────────────────── -->
     <div class="card" style="padding-bottom:1rem;">
         <a th:href="@{/}" style="font-size:0.875rem; text-decoration:none; color:var(--primary-color);">← Back to List</a>
-        <h2 style="margin-top:0.75rem;">Transaction: <code th:text="${txId}"></code></h2>
+        <h2 style="margin-top:0.75rem;">Trace Details: <code th:text="${txId}"></code></h2>
     </div>
 
-    <!-- ── Summary stats ────────────────────────────── -->
+    <!-- ── Summary ─────────────────────────────────── -->
     <div class="card" th:if="${not #lists.isEmpty(events)}">
         <div class="stats-grid">
-            <div class="stat-item">
-                <div class="stat-value" th:text="${#lists.size(events)}">0</div>
-                <div class="stat-label">Total Spans</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-value"
-                     th:text="${events[events.size()-1].timestamp - events[0].timestamp} + 'ms'">-</div>
-                <div class="stat-label">Duration</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-value" id="statServers">-</div>
-                <div class="stat-label">Servers</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-value" id="statErr">0</div>
-                <div class="stat-label">Errors</div>
-            </div>
+            <div class="stat-item"><div class="stat-value" th:text="${#lists.size(events)}">0</div><div class="stat-label">Total Logs</div></div>
+            <div class="stat-item"><div class="stat-value" th:text="${events[events.size()-1].timestamp - events[0].timestamp} + 'ms'">-</div><div class="stat-label">Duration</div></div>
+            <div class="stat-item"><div class="stat-value" id="statServers">-</div><div class="stat-label">Servers</div></div>
+            <div class="stat-item"><div class="stat-value" id="statErr">0</div><div class="stat-label">Errors</div></div>
         </div>
     </div>
 
-    <!-- ── Error Summary Card ──────────────────────── -->
-    <div class="error-summary-card" id="errorSummary" style="display:none;">
-        <div class="error-summary-header">
-            <span style="font-size:1.2rem;">⚠️</span>
-            <span>Error Summary</span>
-        </div>
-        <div id="errorList">
-            <!-- Populated by JS -->
-        </div>
-    </div>
-
-    <!-- ── Gantt chart ──────────────────────────────── -->
+    <!-- ── Gantt ───────────────────────────────────── -->
     <div class="card">
         <div class="card-header">
             <h3>Timeline (Logical Hierarchy)</h3>
-            <div class="refresh-bar">
-                <span class="refresh-dot"></span>
-                <span id="timelineMsg">Processing events...</span>
-            </div>
+            <div class="refresh-bar"><span id="timelineMsg">Analyzing sequence...</span></div>
         </div>
         
-        <div id="ganttContainer" class="gantt-chart">
-            <div class="gantt-container">
-                <div class="gantt-header" id="ganttRuler">
-                    <!-- JS Populated Ruler -->
-                </div>
-                <div class="gantt-body" id="ganttBody">
-                    <!-- JS Populated Rows -->
-                </div>
+        <div class="gantt-outer-container">
+            <div class="gantt-header-sticky">
+                <div class="col-label-header">Operation Name</div>
+                <div class="col-timeline-header" id="ganttRuler"></div>
             </div>
+            <div id="ganttBody"></div>
         </div>
-        <p th:if="${#lists.isEmpty(events)}" style="color:var(--secondary-color);">
-            No events found for this transaction.
-        </p>
     </div>
 
-    <!-- Tooltip element -->
     <div id="spanTooltip" class="span-tooltip"></div>
 
-    <!-- ── Event list ────────────────────────────────── -->
+    <!-- ── List ────────────────────────────────────── -->
     <div class="card">
-        <h3>Event List</h3>
+        <h3>Raw Event List</h3>
         <table id="eventTable">
             <thead>
                 <tr>
@@ -89,45 +189,20 @@
             </thead>
             <tbody>
                 <th:block th:each="event,stat : ${events}">
-                    <!-- Main event row -->
-                    <tr th:classappend="${event.success} ? '' : ' row-err'"
-                        th:attr="data-success=${event.success}, data-server=${event.serverName}">
-                        <td style="font-family:monospace; font-size:0.82rem;"
-                            th:text="${event.timestamp - events[0].timestamp} + 'ms'"></td>
+                    <tr th:classappend="${event.success} ? '' : ' row-err'" th:attr="data-success=${event.success}, data-server=${event.serverName}">
+                        <td style="font-family:monospace; font-size:0.82rem;" th:text="${event.timestamp - events[0].timestamp} + 'ms'"></td>
                         <td th:text="${event.serverName}"></td>
-                        <td>
-                            <span class="cat-badge"
-                                  th:classappend="'cat-' + ${event.category}"
-                                  th:text="${event.category}"></span>
-                        </td>
+                        <td><span class="cat-badge" th:classappend="'cat-' + ${event.category}" th:text="${event.category}"></span></td>
                         <td th:text="${event.type}"></td>
-                        <td class="target-cell">
-                            <div th:text="${event.target}" th:title="${event.target}"></div>
-                            <span th:if="${not event.success and event.extraInfo.containsKey('errorMessage')}"
-                                  class="inline-error"
-                                  th:text="${event.extraInfo.get('errorMessage')}"></span>
-                        </td>
-                        <td style="font-family:monospace; font-size:0.82rem;"
-                            th:text="${event.durationMs != null ? event.durationMs + 'ms' : '-'}"></td>
-                        <td>
-                            <span th:class="${event.success} ? 'badge badge-success' : 'badge badge-error'"
-                                  th:text="${event.success} ? 'OK' : 'ERR'"></span>
-                        </td>
-                        <td style="text-align:center;">
-                            <button th:if="${event.extraInfo != null and not event.extraInfo.isEmpty()}"
-                                    class="btn-extra"
-                                    th:attr="data-idx=${stat.index}">+</button>
-                        </td>
+                        <td class="target-cell"><div th:text="${event.target}" th:title="${event.target}"></div></td>
+                        <td style="font-family:monospace; font-size:0.82rem;" th:text="${event.durationMs != null ? event.durationMs + 'ms' : '-'}"></td>
+                        <td><span th:class="${event.success} ? 'badge badge-success' : 'badge badge-error'" th:text="${event.success} ? 'OK' : 'ERR'"></span></td>
+                        <td style="text-align:center;"><button th:if="${event.extraInfo != null and not event.extraInfo.isEmpty()}" class="btn-extra" th:attr="data-idx=${stat.index}">+</button></td>
                     </tr>
-                    <!-- Expandable extra info row -->
-                    <tr th:if="${event.extraInfo != null and not event.extraInfo.isEmpty()}"
-                        class="extra-row"
-                        th:id="'extra-' + ${stat.index}"
-                        style="display:none;">
+                    <tr th:if="${event.extraInfo != null and not event.extraInfo.isEmpty()}" class="extra-row" th:id="'extra-' + ${stat.index}" style="display:none;">
                         <td colspan="8" class="extra-info-cell">
                             <div class="extra-info-grid">
-                                <div class="extra-info-item"
-                                     th:each="entry : ${event.extraInfo.entrySet()}">
+                                <div class="extra-info-item" th:each="entry : ${event.extraInfo.entrySet()}">
                                     <span class="extra-key" th:text="${entry.key}"></span>
                                     <span class="extra-val" th:text="${entry.value}"></span>
                                 </div>
@@ -139,249 +214,130 @@
         </table>
     </div>
 
-    <script th:inline="javascript">
-        // Data injected from server
-        window.rawEvents = /*[[${events}]]*/ [];
-        window.txId = /*[[${txId}]]*/ "";
-    </script>
+    <script th:inline="javascript">window.rawEvents = /*[[${events}]]*/ [];</script>
 
     <script>
-        // ── Summary stats (computed from DOM) ─────────────────────────────────
         document.addEventListener('DOMContentLoaded', function () {
-            const events = window.rawEvents || [];
-            if (events.length === 0) return;
+            const raw = window.rawEvents || [];
+            if (raw.length === 0) return;
 
-            renderGantt(events);
-
-            const rows    = document.querySelectorAll('#eventTable tbody tr[data-server]');
-            let errs      = 0;
-            const servers = new Set();
-            const errorItems = [];
-
-            events.forEach(event => {
-                if (!event.success) {
-                    errorItems.push({
-                        server: event.serverName,
-                        type: event.type,
-                        msg: (event.extraInfo && event.extraInfo.errorMessage) || 'Unknown error',
-                        errorType: (event.extraInfo && event.extraInfo.errorType) || 'Error'
-                    });
-                }
+            const events = raw.map(e => {
+                const ts = Number(e.timestamp || 0);
+                const dur = (e.durationMs !== null && e.durationMs !== undefined) ? Number(e.durationMs) : 0;
+                const start = (e.durationMs !== null) ? (ts - dur) : ts;
+                return { ...e, ts, dur, start, end: ts };
             });
 
-            rows.forEach(r => {
-                if (r.dataset.success === 'false') errs++;
-                if (r.dataset.server)  servers.add(r.dataset.server);
-            });
-
-            const elServers = document.getElementById('statServers');
-            const elErr     = document.getElementById('statErr');
-            if (elServers) elServers.textContent = servers.size;
-            if (elErr) {
-                elErr.textContent = errs;
-                if (errs > 0) elErr.classList.add('err');
-            }
-
-            // Populate Error Summary Card
-            if (errorItems.length > 0) {
-                const summaryCard = document.getElementById('errorSummary');
-                const errorList = document.getElementById('errorList');
-                summaryCard.style.display = 'block';
-                
-                errorItems.forEach(item => {
-                    const div = document.createElement('div');
-                    div.className = 'error-item';
-                    div.innerHTML = `
-                        <div class="error-item-meta">[${item.server}] ${item.type} - ${item.errorType}</div>
-                        <div class="error-item-msg">${item.msg}</div>
-                    `;
-                    errorList.appendChild(div);
-                });
-            }
-        });
-
-        // ── Gantt Rendering Logic ───────────────────────────────────────────
-        function renderGantt(events) {
-            const container = document.getElementById('ganttBody');
-            const ruler = document.getElementById('ganttRuler');
-            const msgEl = document.getElementById('timelineMsg');
-            
-            if (!container || events.length === 0) return;
-
-            // 1. Convert flat events to Spans
-            // Since we have durationMs in END events, we can reconstruct the span.
-            // Some events (MQ_PRODUCE, CACHE_SET) are markers (point in time).
-            const minTime = events[0].timestamp;
-            const maxTime = events[events.length - 1].timestamp;
+            const minTime = Math.min(...events.map(e => e.start));
+            const maxTime = Math.max(...events.map(e => e.ts));
             const totalDuration = Math.max(maxTime - minTime, 1);
 
-            const spans = [];
-            events.forEach(e => {
-                if (e.durationMs !== null) {
-                    // It's an END event with duration
-                    spans.push({
-                        id: e.eventId,
-                        server: e.serverName,
-                        category: e.category,
-                        type: e.type,
-                        target: e.target,
-                        start: e.timestamp - e.durationMs,
-                        end: e.timestamp,
-                        duration: e.durationMs,
-                        success: e.success,
-                        extra: e.extraInfo
-                    });
-                } else {
-                    // Marker event (START or instant)
-                    spans.push({
-                        id: e.eventId,
-                        server: e.serverName,
-                        category: e.category,
-                        type: e.type,
-                        target: e.target,
-                        start: e.timestamp,
-                        end: e.timestamp,
-                        duration: 0,
-                        success: e.success,
-                        extra: e.extraInfo
-                    });
-                }
-            });
+            document.getElementById('statServers').textContent = new Set(events.map(e => e.serverName)).size;
+            document.getElementById('statErr').textContent = events.filter(e => !e.success).length;
 
-            // 2. Sort by start time and duration (desc)
-            spans.sort((a, b) => (a.start - b.start) || (b.duration - a.duration));
+            renderGantt(events, minTime, totalDuration);
+        });
 
-            // 3. Calculate Depth & Error Propagation
-            spans.forEach((span, i) => {
-                let depth = 0;
-                span.hasChildError = false;
-                for (let j = i - 1; j >= 0; j--) {
-                    const prev = spans[j];
-                    if (span.start >= prev.start && span.end <= prev.end && prev.duration > 0) {
-                        depth = prev.depth + 1;
-                        span.parentId = prev.id;
-                        break;
-                    }
-                }
-                span.depth = depth;
-            });
-
-            // 3.1 Reverse pass for error propagation (if child failed, mark parents)
-            for (let i = spans.length - 1; i >= 0; i--) {
-                const s = spans[i];
-                if (!s.success || s.hasChildError) {
-                    let parent = spans.find(p => p.id === s.parentId);
-                    if (parent) parent.hasChildError = true;
-                }
+        function renderGantt(events, minTime, totalDuration) {
+            const container = document.getElementById('ganttBody');
+            const ruler = document.getElementById('ganttRuler');
+            
+            if (isNaN(totalDuration)) {
+                document.getElementById('timelineMsg').textContent = "Data load error";
+                return;
             }
 
-            // 4. Render Ruler
-            const steps = 5;
-            let rulerHtml = `<div class="gantt-ruler">`;
-            for (let i = 0; i <= steps; i++) {
-                const time = Math.round((totalDuration / steps) * i);
-                rulerHtml += `<div class="gantt-ruler-label">${time}ms</div>`;
+            // Render Ruler
+            let rulerHtml = "";
+            for (let i = 0; i <= 5; i++) {
+                const left = (i / 5) * 100;
+                rulerHtml += `<div class="ruler-tick" style="left:${left}%">${Math.round((totalDuration/5)*i)}ms</div>`;
             }
-            rulerHtml += `</div>`;
             ruler.innerHTML = rulerHtml;
 
-            // 5. Render Spans
-            const catColors = {
-                'HTTP': '#2563eb',
-                'DB': '#059669',
-                'CACHE': '#d97706',
-                'MQ': '#7c3aed',
-                'IO': '#64748b'
-            };
+            // Grouping by Server (First appearance order)
+            const serverOrder = [];
+            const groups = {};
+            events.forEach(e => {
+                if (!groups[e.serverName]) {
+                    groups[e.serverName] = [];
+                    serverOrder.push(e.serverName);
+                }
+                groups[e.serverName].push(e);
+            });
 
-            const html = spans.map(s => {
-                const left = ((s.start - minTime) / totalDuration) * 100;
-                const width = Math.max((s.duration / totalDuration) * 100, 0.2);
-                const color = catColors[s.category] || '#64748b';
+            const catColors = { 'HTTP': '#2563eb', 'DB': '#059669', 'CACHE': '#d97706', 'MQ': '#7c3aed' };
+
+            let html = "";
+            serverOrder.forEach(server => {
+                const svEvents = groups[server];
                 
-                return `
-                <div class="gantt-row depth-${s.depth}" style="--depth-offset: ${s.depth * 1.5}rem">
-                    ${s.depth > 0 ? `<div class="connector-v" style="--depth-offset: ${s.depth * 1.5}rem"></div>` : ''}
-                    <div class="gantt-label">
-                        <div class="gantt-label-server" title="${s.server}">
-                            ${s.hasChildError && s.success ? '<span style="color:var(--error-color); margin-right:4px;">⚠️</span>' : ''}
-                            ${s.server}
-                        </div>
-                        <div class="gantt-label-type">
-                            <span class="cat-badge cat-${s.category}" style="padding:0 4px; font-size:0.6rem;">${s.category}</span>
-                            ${s.type.replace('_END', '').replace('_START', '')}
-                        </div>
-                    </div>
-                    <div class="gantt-bar-container">
-                        ${s.duration > 0 ? `
-                            <div class="gantt-bar ${s.success ? '' : 'bar-err'}" 
-                                 style="left: ${left}%; width: ${width}%; background-color: ${color}"
-                                 onmouseover="showTooltip(event, ${JSON.stringify(s).replace(/"/g, '&quot;')})"
-                                 onmouseout="hideTooltip()">
-                            </div>
-                        ` : `
-                            <div class="gantt-marker" style="left: ${left}%"
-                                 onmouseover="showTooltip(event, ${JSON.stringify(s).replace(/"/g, '&quot;')})"
-                                 onmouseout="hideTooltip()">
-                            </div>
-                        `}
-                    </div>
-                </div>`;
-            }).join('');
-
-            container.innerHTML = html;
-            msgEl.textContent = `${spans.length} spans processed`;
-            document.querySelector('.refresh-dot').classList.add('active');
-        }
-
-        // ── Tooltip Helpers ───────────────────────────────────────────────
-        const tooltip = document.getElementById('spanTooltip');
-        function showTooltip(e, span) {
-            let extraHtml = '';
-            if (span.extra) {
-                Object.entries(span.extra).forEach(([k, v]) => {
-                    if (v) extraHtml += `<div style="font-size:0.65rem; color:#94a3b8; margin-top:2px;"><strong>${k}:</strong> ${v}</div>`;
+                // Indentation calculation
+                svEvents.forEach((e, i) => {
+                    let d = 0;
+                    for(let j=i-1; j>=0; j--) {
+                        if (e.start >= svEvents[j].start && e.ts <= svEvents[j].ts && svEvents[j].dur > 0 && e !== svEvents[j]) d++;
+                    }
+                    e.depth = d;
                 });
-            }
 
-            tooltip.innerHTML = `
-                <strong style="color:#fff">${span.type}</strong>
-                <div class="tooltip-target" style="color:#cbd5e1; margin-bottom:4px;">${span.target}</div>
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <span class="badge ${span.success ? 'badge-success' : 'badge-error'}" style="padding:1px 4px;">
-                        ${span.success ? 'OK' : 'ERR'}
-                    </span>
-                    <span style="font-family:monospace;">${span.duration}ms</span>
-                </div>
-                ${extraHtml}
-            `;
+                html += `<div class="server-divider"><span class="badge-svc">${server}</span> <span style="opacity:0.6; font-weight:normal;">${svEvents.length} events</span></div>`;
+
+                svEvents.forEach(e => {
+                    const left = ((e.start - minTime) / totalDuration) * 100;
+                    const width = e.dur > 0 ? Math.max((e.dur / totalDuration) * 100, 1.2) : 0;
+                    const color = catColors[e.category] || '#64748b';
+                    const indent = e.depth * 16;
+                    
+                    html += `
+                    <div class="gantt-row ${e.success ? '' : 'row-err-gantt'}">
+                        <div class="cell-label">
+                            <div style="width:${indent}px; flex-shrink:0;"></div>
+                            <div class="dot-cat" style="background-color:${color}"></div>
+                            <div class="txt-op" title="${e.type}">${e.type}</div>
+                        </div>
+                        <div class="cell-timeline">
+                            ${e.dur > 0 ? `
+                                <div class="bar-item" 
+                                     style="left:${left}%; width:${width}%; background-color:${color}"
+                                     onmouseover="showTooltip(event, '${e.type}', '${e.target}', ${e.dur}, ${e.success})"
+                                     onmouseout="hideTooltip()">
+                                     <span class="lbl-dur">${e.dur}ms</span>
+                                </div>
+                            ` : `
+                                <div class="marker-item" style="left:${left}%; background-color:${color}"
+                                     onmouseover="showTooltip(event, '${e.type}', '${e.target}', 0, ${e.success})"
+                                     onmouseout="hideTooltip()">
+                                </div>
+                            `}
+                        </div>
+                    </div>`;
+                });
+            });
+            container.innerHTML = html;
+            document.getElementById('timelineMsg').textContent = `${events.length} events mapped`;
+        }
+
+        const tooltip = document.getElementById('spanTooltip');
+        function showTooltip(e, type, target, dur, success) {
+            tooltip.innerHTML = `<strong>${type}</strong><div style="font-size:0.7rem; color:#cbd5e1; margin-top:4px; max-width:300px; overflow-wrap:break-word;">${target}</div>
+                <div style="margin-top:4px; font-weight:800; color:${success?'#4ade80':'#fb7185'}">${success?'✅ OK':'❌ ERR'} | ${dur}ms</div>`;
             tooltip.style.display = 'block';
-            updateTooltipPos(e);
-        }
-
-        function hideTooltip() {
-            tooltip.style.display = 'none';
-        }
-
-        function updateTooltipPos(e) {
             tooltip.style.left = (e.pageX + 15) + 'px';
             tooltip.style.top = (e.pageY + 15) + 'px';
         }
+        function hideTooltip() { tooltip.style.display = 'none'; }
 
-        window.addEventListener('mousemove', (e) => {
-            if (tooltip.style.display === 'block') {
-                updateTooltipPos(e);
-            }
-        });
-
-        // ── Expand / collapse extra info rows ─────────────────────────────────
         document.addEventListener('click', function (e) {
             if (!e.target.classList.contains('btn-extra')) return;
             const idx = e.target.dataset.idx;
             const row = document.getElementById('extra-' + idx);
             if (!row) return;
-            const hidden = row.style.display === 'none' || row.style.display === '';
-            row.style.display  = hidden ? 'table-row' : 'none';
+            const hidden = row.style.display === 'none';
+            row.style.display = hidden ? 'table-row' : 'none';
             e.target.textContent = hidden ? '−' : '+';
         });
     </script>
+</section>
+</body>
+</html>

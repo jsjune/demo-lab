@@ -66,7 +66,7 @@ public class RedisPlugin implements TracerPlugin {
         @Override
         protected void onMethodEnter() {
             mv.visitVarInsn(ALOAD, 1);
-            mv.visitMethodInsn(INVOKESTATIC, "java/lang/String", "valueOf", "(Ljava/lang/Object;)Ljava/lang/String;", false);
+            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "safeKeyToString", "(Ljava/lang/Object;)Ljava/lang/String;", false);
 
             if ("get".equals(commandName) || "hget".equals(commandName)) {
                 mv.visitInsn(ICONST_1);
@@ -94,7 +94,9 @@ public class RedisPlugin implements TracerPlugin {
                     @Override
                     public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
                         MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
-                        if (isTargetCommand(name)) return new JedisAdvice(mv, access, name, descriptor);
+                        if (isTargetCommand(name) && descriptor.startsWith("(Ljava/lang/String;")) {
+                            return new JedisAdvice(mv, access, name, descriptor);
+                        }
                         return mv;
                     }
                 }, ClassReader.EXPAND_FRAMES);
@@ -118,6 +120,7 @@ public class RedisPlugin implements TracerPlugin {
         @Override
         protected void onMethodEnter() {
             mv.visitVarInsn(ALOAD, 1);
+            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "safeKeyToString", "(Ljava/lang/Object;)Ljava/lang/String;", false);
 
             if ("get".equals(commandName)) {
                 mv.visitInsn(ICONST_1);

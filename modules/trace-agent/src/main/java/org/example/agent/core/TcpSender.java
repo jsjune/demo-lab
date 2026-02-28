@@ -29,11 +29,14 @@ public class TcpSender {
             Socket socket = null;
             PrintWriter writer = null;
             long backoffMs = 1000;
+            TraceEvent pendingEvent = null;
 
             while (true) {
                 try {
-                    TraceEvent event = queue.poll(1, TimeUnit.SECONDS);
-                    if (event == null) continue;
+                    if (pendingEvent == null) {
+                        pendingEvent = queue.poll(1, TimeUnit.SECONDS);
+                    }
+                    if (pendingEvent == null) continue;
 
                     if (socket == null || socket.isClosed() || writer == null || writer.checkError()) {
                         if (socket != null) try { socket.close(); } catch (Exception ignored) {}
@@ -51,13 +54,14 @@ public class TcpSender {
                         backoffMs = 1000;
                     }
 
-                    writer.println(mapper.writeValueAsString(event));
+                    writer.println(mapper.writeValueAsString(pendingEvent));
+                    pendingEvent = null;
 
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
                 } catch (Exception e) {
-                    // Exponential backoff: 1s → 2s → 4s → … → 30s
+                    // pendingEvent is preserved — will be retried on next loop iteration
                     AgentLogger.warn("Collector connection failed. Retrying in " + backoffMs + "ms. Error: " + e.getMessage());
                     try { TimeUnit.MILLISECONDS.sleep(backoffMs); } catch (InterruptedException ignored) {}
                     backoffMs = Math.min(backoffMs * 2, BACKOFF_MAX_MS);

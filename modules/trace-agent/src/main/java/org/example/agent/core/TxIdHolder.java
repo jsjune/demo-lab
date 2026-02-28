@@ -1,7 +1,7 @@
 package org.example.agent.core;
 
 public class TxIdHolder {
-    private static final InheritableThreadLocal<String> holder = new InheritableThreadLocal<>();
+    private static final ThreadLocal<String> holder = new ThreadLocal<>();
 
     public static void set(String txId) { holder.set(txId); }
     public static String get() { return holder.get(); }

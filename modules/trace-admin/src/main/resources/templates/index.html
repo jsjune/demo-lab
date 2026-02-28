@@ -115,7 +115,8 @@
                 <tr th:each="trace : ${traces}"
                     th:classappend="${trace.success} ? '' : ' row-err'"
                     th:attr="data-status=${trace.success ? 'ok' : 'err'}, data-cat=${trace.category}, data-txid=${trace.txId}">
-                    <td th:text="${#dates.format(new java.util.Date(trace.timestamp), 'MM-dd HH:mm:ss')}"></td>
+                    <td style="font-family:monospace; font-size:0.8rem;"
+                        th:text="${#dates.format(new java.util.Date(trace.timestamp), 'MM-dd HH:mm:ss.SSS')}"></td>
                     <td>
                         <div class="tx-id-cell">
                             <span class="tx-id-short"

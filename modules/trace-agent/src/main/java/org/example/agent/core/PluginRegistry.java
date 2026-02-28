@@ -12,6 +12,9 @@ public class PluginRegistry {
         if (!activePlugins.isEmpty()) return;
         ServiceLoader<TracerPlugin> loader = ServiceLoader.load(TracerPlugin.class);
         for (TracerPlugin plugin : loader) {
+            // InstrumentationContext is null: the current SPI contract does not require
+            // a context object — all configuration is read via AgentConfig directly.
+            // SPI implementations must tolerate null (documented in TracerPlugin interface).
             if (plugin.isEnabled(null)) {
                 try {
                     plugin.init(null);

@@ -283,8 +283,11 @@ public class HttpPlugin implements TracerPlugin {
                 // Stack: [..., throwable]  — original throwable re-thrown by ATHROW
                 return;
             }
-            // Normal return: RestTemplate throws on 4xx/5xx by default, so reaching here
-            // means the response was 2xx (or redirect). Use 200 as the status code.
+            // Normal return: RestTemplate throws on 4xx/5xx by default (DefaultResponseErrorHandler),
+            // so reaching here means success (2xx/3xx). Use 200 as a proxy status code.
+            // STRUCTURAL LIMITATION: if a custom ResponseErrorHandler suppresses 4xx/5xx exceptions,
+            // the actual status code cannot be retrieved at this bytecode injection point (doExecute
+            // does not expose the ClientHttpResponse after execute()). Accepted trade-off.
             mv.visitVarInsn(ALOAD, httpMethodIdx);
             mv.visitMethodInsn(INVOKEVIRTUAL, "org/springframework/http/HttpMethod", "name", "()Ljava/lang/String;", false);
             mv.visitVarInsn(ALOAD, 1);
@@ -384,15 +387,6 @@ public class HttpPlugin implements TracerPlugin {
         } catch (Throwable t) {
             return request;
         }
-    }
-
-    public static void injectHeader(Object callback, String txId) {
-        if (txId == null || callback == null) return;
-        ReflectionUtils.getFieldValue(callback, "val$request").ifPresent(req ->
-            ReflectionUtils.invokeMethod(req, "getHeaders").ifPresent(headers ->
-                ReflectionUtils.invokeMethod(headers, "add", AgentConfig.getHeaderKey(), txId)
-            )
-        );
     }
 
     public static void injectHeaderToRequest(Object request, String txId) {
