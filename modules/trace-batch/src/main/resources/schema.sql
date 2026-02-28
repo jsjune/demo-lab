@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS trace_events (
     duration_ms BIGINT,
     success BOOLEAN,
     timestamp BIGINT NOT NULL,
+    span_id VARCHAR(64),
     extra_info JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (event_id, timestamp) -- Primary key must include partition key
@@ -19,6 +20,9 @@ CREATE TABLE IF NOT EXISTS trace_events_default PARTITION OF trace_events DEFAUL
 
 -- Index for tx_id
 CREATE INDEX IF NOT EXISTS idx_trace_events_tx_id ON trace_events(tx_id);
+
+-- Index for span_id
+CREATE INDEX IF NOT EXISTS idx_trace_events_span_id ON trace_events(span_id);
 
 -- Index for monitoring metrics (TPS, Latency, Error Rate)
 CREATE INDEX IF NOT EXISTS idx_trace_events_metrics ON trace_events(timestamp, type);

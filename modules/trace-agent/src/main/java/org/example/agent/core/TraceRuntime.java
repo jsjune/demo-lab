@@ -533,16 +533,19 @@ public class TraceRuntime {
     private static TraceEvent createEvent(String txId, TraceEventType type, TraceCategory category,
                                           String target, Long durationMs, boolean success,
                                           Map<String, Object> extraInfo) {
+        long now = System.currentTimeMillis();
+        String spanId = now + "-" + java.util.UUID.randomUUID().toString().substring(0, 8);
         return new TraceEvent(
             AgentConfig.getServerName() + "-" + EVENT_SEQ.incrementAndGet(),
             txId,
+            spanId,
             type,
             category,
             AgentConfig.getServerName(),
             target,
             durationMs,
             success,
-            System.currentTimeMillis(),
+            now,
             extraInfo != null ? extraInfo : new HashMap<>()
         );
     }

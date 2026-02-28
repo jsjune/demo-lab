@@ -7,6 +7,7 @@ import java.util.Map;
 public record TraceEvent(
     String eventId,
     String txId,
+    String spanId,
     TraceEventType type,
     TraceCategory category,
     String serverName,

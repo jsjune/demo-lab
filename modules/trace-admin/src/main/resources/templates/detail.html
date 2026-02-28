@@ -12,6 +12,7 @@
             overflow: hidden;
             margin-bottom: 2rem;
             box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
+            box-sizing: border-box;
         }
         .gantt-header-sticky {
             display: flex;
@@ -29,6 +30,7 @@
             flex: 0 0 300px;
             padding: 0 1.25rem;
             border-right: 1px solid var(--border-color);
+            box-sizing: border-box;
         }
         .col-timeline-header {
             flex: 1;
@@ -44,7 +46,7 @@
             color: #94a3b8;
         }
         .server-divider {
-            padding: 0.75rem 1.25rem;
+            padding: 0.6rem 1.25rem;
             background: #f1f5f9;
             border-bottom: 1px solid var(--border-color);
             border-top: 1px solid var(--border-color);
@@ -66,9 +68,11 @@
         }
         .gantt-row {
             display: flex;
-            height: 36px;
+            height: 32px;
             border-bottom: 1px solid #f1f5f9;
             transition: background 0.15s;
+            box-sizing: border-box;
+            align-items: stretch;
         }
         .gantt-row:hover { background: #f8fafc; }
         .gantt-row:last-child { border-bottom: none; }
@@ -82,6 +86,7 @@
             gap: 10px;
             overflow: hidden;
             background: inherit;
+            box-sizing: border-box;
         }
         .txt-op {
             font-size: 0.75rem;
@@ -94,27 +99,30 @@
         .cell-timeline {
             flex: 1;
             position: relative;
-            padding-right: 60px; /* Space for labels at the end */
+            padding-right: 100px; /* Increased to 100px for label safety */
             background-image: linear-gradient(to right, #f1f5f9 1px, transparent 1px);
             background-size: 20% 100%;
+            box-sizing: border-box;
         }
         .bar-item {
             position: absolute;
-            height: 18px;
-            top: 9px;
-            border-radius: 5px;
+            height: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            border-radius: 4px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
             cursor: pointer;
             z-index: 10;
-            min-width: 4px;
+            min-width: 2px;
+            box-sizing: border-box;
         }
         .marker-item {
             position: absolute;
-            width: 10px;
-            height: 10px;
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
-            top: 13px;
-            transform: translateX(-50%);
+            top: 50%;
+            transform: translate(-50%, -50%);
             box-shadow: 0 0 0 2px #fff, 0 2px 4px rgba(0,0,0,0.2);
             z-index: 11;
             cursor: pointer;
@@ -122,7 +130,8 @@
         .lbl-dur {
             position: absolute;
             left: calc(100% + 8px);
-            top: 1px;
+            top: 50%;
+            transform: translateY(-50%);
             font-size: 0.65rem;
             font-weight: 800;
             color: #64748b;
@@ -178,6 +187,7 @@
             <thead>
                 <tr>
                     <th>Offset</th>
+                    <th>Time (KST)</th>
                     <th>Server</th>
                     <th>Category</th>
                     <th>Type</th>
@@ -191,6 +201,7 @@
                 <th:block th:each="event,stat : ${events}">
                     <tr th:classappend="${event.success} ? '' : ' row-err'" th:attr="data-success=${event.success}, data-server=${event.serverName}">
                         <td style="font-family:monospace; font-size:0.82rem;" th:text="${event.timestamp - events[0].timestamp} + 'ms'"></td>
+                        <td class="kst-time" style="font-family:monospace; font-size:0.75rem;" th:attr="data-ts=${event.timestamp}"></td>
                         <td th:text="${event.serverName}"></td>
                         <td><span class="cat-badge" th:classappend="'cat-' + ${event.category}" th:text="${event.category}"></span></td>
                         <td th:text="${event.type}"></td>
@@ -200,7 +211,7 @@
                         <td style="text-align:center;"><button th:if="${event.extraInfo != null and not event.extraInfo.isEmpty()}" class="btn-extra" th:attr="data-idx=${stat.index}">+</button></td>
                     </tr>
                     <tr th:if="${event.extraInfo != null and not event.extraInfo.isEmpty()}" class="extra-row" th:id="'extra-' + ${stat.index}" style="display:none;">
-                        <td colspan="8" class="extra-info-cell">
+                        <td colspan="9" class="extra-info-cell">
                             <div class="extra-info-grid">
                                 <div class="extra-info-item" th:each="entry : ${event.extraInfo.entrySet()}">
                                     <span class="extra-key" th:text="${entry.key}"></span>
@@ -217,23 +228,41 @@
     <script th:inline="javascript">window.rawEvents = /*[[${events}]]*/ [];</script>
 
     <script>
+        function formatKST(ts) {
+            const date = new Date(Number(ts));
+            const h = String(date.getHours()).padStart(2, '0');
+            const m = String(date.getMinutes()).padStart(2, '0');
+            const s = String(date.getSeconds()).padStart(2, '0');
+            const ms = String(date.getMilliseconds()).padStart(3, '0');
+            return `${h}:${m}:${s}.${ms}`;
+        }
+
         document.addEventListener('DOMContentLoaded', function () {
+            // Update table times
+            document.querySelectorAll('.kst-time').forEach(el => {
+                el.textContent = formatKST(el.dataset.ts);
+            });
+
             const raw = window.rawEvents || [];
             if (raw.length === 0) return;
 
+            // 1. Map every event 1:1 for the timeline
             const events = raw.map(e => {
-                const ts = Number(e.timestamp || 0);
-                const dur = (e.durationMs !== null && e.durationMs !== undefined) ? Number(e.durationMs) : 0;
-                const start = (e.durationMs !== null) ? (ts - dur) : ts;
-                return { ...e, ts, dur, start, end: ts };
+                const ts = Number(e.timestamp);
+                const dur = e.durationMs ? Number(e.durationMs) : 0;
+                // For Gantt display: if it's an END or has duration, show as a bar ending at timestamp
+                const isEnd = e.type.endsWith('_END') || e.type === 'HTTP_OUT';
+                const start = isEnd ? (ts - dur) : ts;
+                return { ...e, start, end: ts, dur };
             });
 
             const minTime = Math.min(...events.map(e => e.start));
-            const maxTime = Math.max(...events.map(e => e.ts));
-            const totalDuration = Math.max(maxTime - minTime, 1);
+            const maxTime = Math.max(...events.map(e => e.end));
+            // Add a 5% buffer to ensure labels have breathing room
+            const totalDuration = Math.max((maxTime - minTime) * 1.05, 1);
 
-            document.getElementById('statServers').textContent = new Set(events.map(e => e.serverName)).size;
-            document.getElementById('statErr').textContent = events.filter(e => !e.success).length;
+            document.getElementById('statServers').textContent = new Set(raw.map(e => e.serverName)).size;
+            document.getElementById('statErr').textContent = raw.filter(e => !e.success).length;
 
             renderGantt(events, minTime, totalDuration);
         });
@@ -255,7 +284,7 @@
             }
             ruler.innerHTML = rulerHtml;
 
-            // Grouping by Server (First appearance order)
+            // Group by Server
             const serverOrder = [];
             const groups = {};
             events.forEach(e => {
@@ -272,22 +301,25 @@
             serverOrder.forEach(server => {
                 const svEvents = groups[server];
                 
-                // Indentation calculation
-                svEvents.forEach((e, i) => {
-                    let d = 0;
-                    for(let j=i-1; j>=0; j--) {
-                        if (e.start >= svEvents[j].start && e.ts <= svEvents[j].ts && svEvents[j].dur > 0 && e !== svEvents[j]) d++;
-                    }
-                    e.depth = d;
+                // Stack-based indentation for logical nesting (Start...End)
+                const stack = [];
+                svEvents.forEach((e) => {
+                    const isStart = e.type.endsWith('_START');
+                    const isEnd = e.type.endsWith('_END');
+
+                    if (isEnd && stack.length > 0) stack.pop();
+                    e.depth = stack.length;
+                    if (isStart) stack.push(e.type);
                 });
 
                 html += `<div class="server-divider"><span class="badge-svc">${server}</span> <span style="opacity:0.6; font-weight:normal;">${svEvents.length} events</span></div>`;
 
                 svEvents.forEach(e => {
                     const left = ((e.start - minTime) / totalDuration) * 100;
-                    const width = e.dur > 0 ? Math.max((e.dur / totalDuration) * 100, 1.2) : 0;
+                    const width = e.dur > 0 ? Math.max((e.dur / totalDuration) * 100, 0.3) : 0;
                     const color = catColors[e.category] || '#64748b';
                     const indent = e.depth * 16;
+                    const timeStr = formatKST(e.timestamp);
                     
                     html += `
                     <div class="gantt-row ${e.success ? '' : 'row-err-gantt'}">
@@ -300,13 +332,13 @@
                             ${e.dur > 0 ? `
                                 <div class="bar-item" 
                                      style="left:${left}%; width:${width}%; background-color:${color}"
-                                     onmouseover="showTooltip(event, '${e.type}', '${e.target}', ${e.dur}, ${e.success})"
+                                     onmouseover="showTooltip(event, '${e.type}', '${e.target}', ${e.dur}, ${e.success}, '${timeStr}')"
                                      onmouseout="hideTooltip()">
                                      <span class="lbl-dur">${e.dur}ms</span>
                                 </div>
                             ` : `
                                 <div class="marker-item" style="left:${left}%; background-color:${color}"
-                                     onmouseover="showTooltip(event, '${e.type}', '${e.target}', 0, ${e.success})"
+                                     onmouseover="showTooltip(event, '${e.type}', '${e.target}', 0, ${e.success}, '${timeStr}')"
                                      onmouseout="hideTooltip()">
                                 </div>
                             `}
@@ -319,8 +351,11 @@
         }
 
         const tooltip = document.getElementById('spanTooltip');
-        function showTooltip(e, type, target, dur, success) {
-            tooltip.innerHTML = `<strong>${type}</strong><div style="font-size:0.7rem; color:#cbd5e1; margin-top:4px; max-width:300px; overflow-wrap:break-word;">${target}</div>
+        function showTooltip(e, type, target, dur, success, timeStr) {
+            tooltip.innerHTML = `
+                <div style="margin-bottom:4px; font-size:0.65rem; color:#94a3b8; font-family:monospace;">${timeStr} (KST)</div>
+                <strong>${type}</strong>
+                <div style="font-size:0.7rem; color:#cbd5e1; margin-top:4px; max-width:300px; overflow-wrap:break-word;">${target}</div>
                 <div style="margin-top:4px; font-weight:800; color:${success?'#4ade80':'#fb7185'}">${success?'✅ OK':'❌ ERR'} | ${dur}ms</div>`;
             tooltip.style.display = 'block';
             tooltip.style.left = (e.pageX + 15) + 'px';

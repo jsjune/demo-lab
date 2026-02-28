@@ -32,7 +32,7 @@ class TraceControllerTest {
     void testTraceDetailWithError() throws Exception {
         String txId = "error-tx-123";
         TraceEvent errorEvent = new TraceEvent(
-            "e1", txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
+            "e1", txId, "s1", TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
             "server-1", "GET /api/test", 100L, false, System.currentTimeMillis(),
             Map.of("errorMessage", "Connection timeout", "errorType", "RuntimeException")
         );

@@ -19,8 +19,8 @@ public class TraceRepository {
     private final ObjectMapper objectMapper;
 
     private static final String INSERT_SQL = 
-        "INSERT INTO trace_events (event_id, tx_id, type, category, server_name, target, duration_ms, success, timestamp, extra_info) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb) " +
+        "INSERT INTO trace_events (event_id, tx_id, span_id, type, category, server_name, target, duration_ms, success, timestamp, extra_info) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb) " +
         "ON CONFLICT (event_id, timestamp) DO NOTHING";
 
     @Transactional
@@ -30,17 +30,18 @@ public class TraceRepository {
         jdbcTemplate.batchUpdate(INSERT_SQL, events, events.size(), (ps, event) -> {
             ps.setString(1, event.eventId());
             ps.setString(2, event.txId());
-            ps.setString(3, event.type() != null ? event.type().name() : null);
-            ps.setString(4, event.category() != null ? event.category().name() : null);
-            ps.setString(5, event.serverName());
-            ps.setString(6, event.target());
-            ps.setObject(7, event.durationMs());
-            ps.setBoolean(8, event.success());
-            ps.setLong(9, event.timestamp());
+            ps.setString(3, event.spanId());
+            ps.setString(4, event.type() != null ? event.type().name() : null);
+            ps.setString(5, event.category() != null ? event.category().name() : null);
+            ps.setString(6, event.serverName());
+            ps.setString(7, event.target());
+            ps.setObject(8, event.durationMs());
+            ps.setBoolean(9, event.success());
+            ps.setLong(10, event.timestamp());
             try {
-                ps.setString(10, objectMapper.writeValueAsString(event.extraInfo()));
+                ps.setString(11, objectMapper.writeValueAsString(event.extraInfo()));
             } catch (Exception e) {
-                ps.setString(10, "{}");
+                ps.setString(11, "{}");
             }
         });
         
