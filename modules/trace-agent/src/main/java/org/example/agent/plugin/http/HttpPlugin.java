@@ -129,6 +129,7 @@ public class HttpPlugin implements TracerPlugin {
             // isErrorDispatch detects Spring Boot's internal /error forward via request
             // attributes, so a real developer-defined /error endpoint is NOT filtered.
             isTrackedId = newLocal(Type.BOOLEAN_TYPE);
+            int forceTraceId = newLocal(Type.BOOLEAN_TYPE);
             mv.visitVarInsn(ALOAD, 1);
             mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime",
                 "isErrorDispatch", "(Ljava/lang/Object;)Z", false);
@@ -140,6 +141,17 @@ public class HttpPlugin implements TracerPlugin {
             mv.visitVarInsn(ILOAD, isTrackedId);
             mv.visitJumpInsn(IFEQ, skip);          // if not tracked, skip onHttpInStart
 
+            // forceTrace = "true".equalsIgnoreCase(request.getHeader(AgentConfig.getForceSampleHeader()))
+            mv.visitVarInsn(ALOAD, 1);
+            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/config/AgentConfig",
+                "getForceSampleHeader", "()Ljava/lang/String;", false);
+            mv.visitMethodInsn(INVOKEINTERFACE, pkg, "getHeader", "(Ljava/lang/String;)Ljava/lang/String;", true);
+            mv.visitLdcInsn("true");
+            mv.visitInsn(SWAP);  // stack: [..., "true", headerVal] — "true".equalsIgnoreCase(headerVal)
+            mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String",
+                "equalsIgnoreCase", "(Ljava/lang/String;)Z", false);
+            mv.visitVarInsn(ISTORE, forceTraceId);
+
             mv.visitVarInsn(ALOAD, 1);
             mv.visitMethodInsn(INVOKEINTERFACE, pkg, "getMethod", "()Ljava/lang/String;", true);
             mv.visitVarInsn(ALOAD, 1);
@@ -147,8 +159,9 @@ public class HttpPlugin implements TracerPlugin {
             mv.visitVarInsn(ALOAD, 1);
             mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/config/AgentConfig", "getHeaderKey", "()Ljava/lang/String;", false);
             mv.visitMethodInsn(INVOKEINTERFACE, pkg, "getHeader", "(Ljava/lang/String;)Ljava/lang/String;", true);
+            mv.visitVarInsn(ILOAD, forceTraceId);
             mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime",
-                "onHttpInStart", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V", false);
+                "onHttpInStart", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Z)V", false);
 
             mv.visitLabel(skip);
         }

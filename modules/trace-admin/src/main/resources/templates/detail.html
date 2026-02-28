@@ -186,11 +186,11 @@
         <table id="eventTable">
             <thead>
                 <tr>
-                    <th>Offset</th>
                     <th>Time (KST)</th>
                     <th>Server</th>
                     <th>Category</th>
                     <th>Type</th>
+                    <th>Span ID</th>
                     <th>Target</th>
                     <th>Duration</th>
                     <th>Status</th>
@@ -200,11 +200,11 @@
             <tbody>
                 <th:block th:each="event,stat : ${events}">
                     <tr th:classappend="${event.success} ? '' : ' row-err'" th:attr="data-success=${event.success}, data-server=${event.serverName}">
-                        <td style="font-family:monospace; font-size:0.82rem;" th:text="${event.timestamp - events[0].timestamp} + 'ms'"></td>
                         <td class="kst-time" style="font-family:monospace; font-size:0.75rem;" th:attr="data-ts=${event.timestamp}"></td>
                         <td th:text="${event.serverName}"></td>
                         <td><span class="cat-badge" th:classappend="'cat-' + ${event.category}" th:text="${event.category}"></span></td>
                         <td th:text="${event.type}"></td>
+                        <td style="font-family:monospace; font-size:0.7rem; color:#64748b;" th:text="${event.spanId}" th:title="${event.spanId}"></td>
                         <td class="target-cell"><div th:text="${event.target}" th:title="${event.target}"></div></td>
                         <td style="font-family:monospace; font-size:0.82rem;" th:text="${event.durationMs != null ? event.durationMs + 'ms' : '-'}"></td>
                         <td><span th:class="${event.success} ? 'badge badge-success' : 'badge badge-error'" th:text="${event.success} ? 'OK' : 'ERR'"></span></td>
@@ -330,15 +330,15 @@
                         </div>
                         <div class="cell-timeline">
                             ${e.dur > 0 ? `
-                                <div class="bar-item" 
+                                <div class="bar-item"
                                      style="left:${left}%; width:${width}%; background-color:${color}"
-                                     onmouseover="showTooltip(event, '${e.type}', '${e.target}', ${e.dur}, ${e.success}, '${timeStr}')"
+                                     onmouseover="showTooltip(event, '${e.type}', '${e.target}', ${e.dur}, ${e.success}, '${timeStr}', '${e.spanId || ''}')"
                                      onmouseout="hideTooltip()">
                                      <span class="lbl-dur">${e.dur}ms</span>
                                 </div>
                             ` : `
                                 <div class="marker-item" style="left:${left}%; background-color:${color}"
-                                     onmouseover="showTooltip(event, '${e.type}', '${e.target}', 0, ${e.success}, '${timeStr}')"
+                                     onmouseover="showTooltip(event, '${e.type}', '${e.target}', 0, ${e.success}, '${timeStr}', '${e.spanId || ''}')"
                                      onmouseout="hideTooltip()">
                                 </div>
                             `}
@@ -351,12 +351,14 @@
         }
 
         const tooltip = document.getElementById('spanTooltip');
-        function showTooltip(e, type, target, dur, success, timeStr) {
+        function showTooltip(e, type, target, dur, success, timeStr, spanId) {
+            const spanIdHtml = spanId ? `<div style="font-size:0.6rem; color:#94a3b8; font-family:monospace; margin-top:4px;">span: ${spanId}</div>` : '';
             tooltip.innerHTML = `
                 <div style="margin-bottom:4px; font-size:0.65rem; color:#94a3b8; font-family:monospace;">${timeStr} (KST)</div>
                 <strong>${type}</strong>
                 <div style="font-size:0.7rem; color:#cbd5e1; margin-top:4px; max-width:300px; overflow-wrap:break-word;">${target}</div>
-                <div style="margin-top:4px; font-weight:800; color:${success?'#4ade80':'#fb7185'}">${success?'✅ OK':'❌ ERR'} | ${dur}ms</div>`;
+                <div style="margin-top:4px; font-weight:800; color:${success?'#4ade80':'#fb7185'}">${success?'✅ OK':'❌ ERR'} | ${dur}ms</div>
+                ${spanIdHtml}`;
             tooltip.style.display = 'block';
             tooltip.style.left = (e.pageX + 15) + 'px';
             tooltip.style.top = (e.pageY + 15) + 'px';

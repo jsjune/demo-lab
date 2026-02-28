@@ -13,10 +13,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class TcpSender {
-    private static final int BUFFER_CAPACITY = 1000;
     private static final long BACKOFF_MAX_MS = 30_000;
 
-    private static final BlockingQueue<TraceEvent> queue = new LinkedBlockingQueue<>(BUFFER_CAPACITY);
+    private static final BlockingQueue<TraceEvent> queue = new LinkedBlockingQueue<>(AgentConfig.getBufferCapacity());
     private static final ObjectMapper mapper = new ObjectMapper();
     private static final AtomicLong dropCounter = new AtomicLong(0);
     private static volatile boolean initialized = false;

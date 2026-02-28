@@ -35,7 +35,7 @@ class TraceRuntimeTest {
     @DisplayName("인바운드 HTTP 호출 시 유입된 트랜잭션 ID를 최우선으로 사용해야 한다")
     void testOnHttpInStartWithIncomingTxId() {
         String incomingTxId = "upstream-12345";
-        TraceRuntime.onHttpInStart("GET", "/api/test", incomingTxId);
+        TraceRuntime.onHttpInStart("GET", "/api/test", incomingTxId, false);
 
         assertEquals(incomingTxId, TxIdHolder.get(), "유입된 txId를 사용해야 함");
         tcpSenderMock.verify(() -> TcpSender.send(argThat(event -> 

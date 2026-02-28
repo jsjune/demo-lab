@@ -46,6 +46,18 @@ public class TraceRuntime {
     private static final java.util.concurrent.ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
         GET_ATTR_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
 
+    // ClassLoader → ClientResponse.statusCode() Method
+    private static final java.util.concurrent.ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
+        HTTP_STATUS_CODE_METHOD_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    // ClassLoader → HttpStatusCode.value() Method (shared by wrapWebClientExchange, emitHttpOutError, onHttpOutError)
+    private static final java.util.concurrent.ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
+        HTTP_STATUS_VALUE_METHOD_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    // ClassLoader → WebClientResponseException.getStatusCode() Method
+    private static final java.util.concurrent.ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
+        WC_EXCEPTION_STATUS_METHOD_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
     public static boolean isErrorDispatch(Object request) {
         try {
             // Strategy 1: DispatcherType == ERROR  (native container error dispatch)
@@ -82,7 +94,7 @@ public class TraceRuntime {
         }
     }
 
-    public static void onHttpInStart(String method, String path, String incomingTxId) {
+    public static void onHttpInStart(String method, String path, String incomingTxId, boolean forceTrace) {
         safeRun(() -> {
             String txId = incomingTxId;
             if (txId != null && !txId.isEmpty()) {
@@ -93,7 +105,7 @@ public class TraceRuntime {
                     txId = TxIdHolder.get();
                     debugLog("[HTTP-IN] Reusing existing txId from context: " + txId);
                 } else {
-                    if (!TxIdGenerator.shouldSample()) {
+                    if (!forceTrace && !TxIdGenerator.shouldSample()) {
                         debugLog("[HTTP-IN] Not sampling this request.");
                         return;
                     }
@@ -166,10 +178,23 @@ public class TraceRuntime {
             int statusCode = -1;
             if (t != null) {
                 try {
-                    java.lang.reflect.Method getStatusCode = t.getClass().getMethod("getStatusCode");
-                    Object status = getStatusCode.invoke(t);
-                    java.lang.reflect.Method valueMethod = status.getClass().getMethod("value");
-                    statusCode = (int) valueMethod.invoke(status);
+                    ClassLoader cl = t.getClass().getClassLoader();
+                    if (cl == null) cl = ClassLoader.getSystemClassLoader();
+                    final ClassLoader resolvedCl = cl;
+                    java.lang.reflect.Method getStatusCode = WC_EXCEPTION_STATUS_METHOD_CACHE.computeIfAbsent(
+                        resolvedCl, loader -> {
+                            try { return t.getClass().getMethod("getStatusCode"); }
+                            catch (Throwable t2) { return null; }
+                        });
+                    if (getStatusCode != null) {
+                        Object status = getStatusCode.invoke(t);
+                        java.lang.reflect.Method valueMethod = HTTP_STATUS_VALUE_METHOD_CACHE.computeIfAbsent(
+                            resolvedCl, loader -> {
+                                try { return status.getClass().getMethod("value"); }
+                                catch (Throwable t2) { return null; }
+                            });
+                        if (valueMethod != null) statusCode = (int) valueMethod.invoke(status);
+                    }
                 } catch (Throwable ignored) {}
             }
             Map<String, Object> extra = new LinkedHashMap<>();
@@ -422,13 +447,27 @@ public class TraceRuntime {
                 try {
                     long durationMs = System.currentTimeMillis() - startTime;
                     ClassLoader cl = response.getClass().getClassLoader();
-                    Class<?> clientResponseIface = Class.forName(
-                        "org.springframework.web.reactive.function.client.ClientResponse", false, cl);
-                    java.lang.reflect.Method statusCodeMethod = clientResponseIface.getMethod("statusCode");
+                    if (cl == null) cl = ClassLoader.getSystemClassLoader();
+                    final ClassLoader resolvedCl = cl;
+                    java.lang.reflect.Method statusCodeMethod = HTTP_STATUS_CODE_METHOD_CACHE.computeIfAbsent(
+                        resolvedCl, loader -> {
+                            try {
+                                return Class.forName(
+                                    "org.springframework.web.reactive.function.client.ClientResponse", false, loader)
+                                    .getMethod("statusCode");
+                            } catch (Throwable t2) { return null; }
+                        });
+                    if (statusCodeMethod == null) throw new IllegalStateException("statusCode method not found");
                     Object statusCodeObj = statusCodeMethod.invoke(response);
-                    Class<?> httpStatusCodeIface = Class.forName(
-                        "org.springframework.http.HttpStatusCode", false, cl);
-                    java.lang.reflect.Method valueMethod = httpStatusCodeIface.getMethod("value");
+                    java.lang.reflect.Method valueMethod = HTTP_STATUS_VALUE_METHOD_CACHE.computeIfAbsent(
+                        resolvedCl, loader -> {
+                            try {
+                                return Class.forName(
+                                    "org.springframework.http.HttpStatusCode", false, loader)
+                                    .getMethod("value");
+                            } catch (Throwable t2) { return null; }
+                        });
+                    if (valueMethod == null) throw new IllegalStateException("value method not found");
                     int statusCode = (int) valueMethod.invoke(statusCodeObj);
                     emitHttpOut(capturedTxId, method, uri, statusCode, durationMs);
                 } catch (Throwable t) {
@@ -497,15 +536,31 @@ public class TraceRuntime {
             if (t != null) {
                 try {
                     ClassLoader cl = t.getClass().getClassLoader();
+                    if (cl == null) cl = ClassLoader.getSystemClassLoader();
+                    final ClassLoader resolvedCl = cl;
                     Class<?> webclientExClass = Class.forName(
                         "org.springframework.web.reactive.function.client.WebClientResponseException", false, cl);
                     if (webclientExClass.isInstance(t)) {
-                        Class<?> httpStatusCodeIface = Class.forName(
-                            "org.springframework.http.HttpStatusCode", false, cl);
-                        java.lang.reflect.Method getStatusCode = webclientExClass.getMethod("getStatusCode");
-                        Object statusCodeObj = getStatusCode.invoke(t);
-                        java.lang.reflect.Method valueMethod = httpStatusCodeIface.getMethod("value");
-                        statusCode = (int) valueMethod.invoke(statusCodeObj);
+                        java.lang.reflect.Method getStatusCode = WC_EXCEPTION_STATUS_METHOD_CACHE.computeIfAbsent(
+                            resolvedCl, loader -> {
+                                try {
+                                    return Class.forName(
+                                        "org.springframework.web.reactive.function.client.WebClientResponseException",
+                                        false, loader).getMethod("getStatusCode");
+                                } catch (Throwable t2) { return null; }
+                            });
+                        if (getStatusCode != null) {
+                            Object statusCodeObj = getStatusCode.invoke(t);
+                            java.lang.reflect.Method valueMethod = HTTP_STATUS_VALUE_METHOD_CACHE.computeIfAbsent(
+                                resolvedCl, loader -> {
+                                    try {
+                                        return Class.forName(
+                                            "org.springframework.http.HttpStatusCode", false, loader)
+                                            .getMethod("value");
+                                    } catch (Throwable t2) { return null; }
+                                });
+                            if (valueMethod != null) statusCode = (int) valueMethod.invoke(statusCodeObj);
+                        }
                     }
                 } catch (Throwable ignored) {}
             }

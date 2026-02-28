@@ -21,6 +21,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import java.lang.reflect.Method;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
@@ -106,7 +107,7 @@ class HttpDispatcherIntegrationTest {
             method.invoke(instance, request, new MockHttpServletResponse());
 
             runtimeMock.verify(
-                () -> TraceRuntime.onHttpInStart(anyString(), anyString(), anyString()),
+                () -> TraceRuntime.onHttpInStart(anyString(), anyString(), anyString(), anyBoolean()),
                 never()
             );
         }
@@ -132,7 +133,7 @@ class HttpDispatcherIntegrationTest {
 
             // txId 헤더가 없으면 null이 전달될 수 있으므로 any()로 검증
             runtimeMock.verify(
-                () -> TraceRuntime.onHttpInStart(any(), any(), any()),
+                () -> TraceRuntime.onHttpInStart(any(), any(), any(), anyBoolean()),
                 atLeastOnce()
             );
         }
@@ -159,7 +160,7 @@ class HttpDispatcherIntegrationTest {
             method.invoke(instance, request, new MockHttpServletResponse());
 
             runtimeMock.verify(
-                () -> TraceRuntime.onHttpInStart(any(), any(), any()),
+                () -> TraceRuntime.onHttpInStart(any(), any(), any(), anyBoolean()),
                 never()
             );
         }

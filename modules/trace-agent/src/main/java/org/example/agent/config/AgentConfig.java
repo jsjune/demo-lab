@@ -150,7 +150,8 @@ public class AgentConfig {
     // General config
     // -----------------------------------------------------------------------
 
-    public static String getHeaderKey()      { return get("header-key", "X-Tx-Id"); }
+    public static String getHeaderKey()           { return get("header-key", "X-Tx-Id"); }
+    public static String getForceSampleHeader()   { return get("force-sample-header", "X-Trace-Force"); }
     public static String getServerName()     { return get("server-name", "unknown-server"); }
     public static String getCollectorHost()  { return get("collector.host", "localhost"); }
     public static int    getCollectorPort()  { return getInt("collector.port", 9200); }
@@ -165,6 +166,7 @@ public class AgentConfig {
         return Boolean.parseBoolean(get("plugin." + pluginId + ".enabled", "true"));
     }
 
+    public static int  getBufferCapacity() { return getInt("buffer.capacity", 1000); }
     public static long getSlowQueryMs()  { return getLong("slow-query-ms", 500); }
     public static long getMinSizeBytes() { return getLong("min-size-bytes", 1024); }
 

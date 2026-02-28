@@ -10,6 +10,8 @@ import org.mockito.MockedStatic;
 import java.lang.reflect.Method;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 @DisplayName("통합: HTTP @TraceIgnore 지원 검증")
@@ -33,7 +35,7 @@ class HttpAgentIntegrationTest extends ByteBuddyIntegrationTest {
             method.invoke(instance, new Object(), new Object());
 
             // Verify that onHttpInStart was NOT called
-            runtimeMock.verify(() -> TraceRuntime.onHttpInStart(anyString(), anyString(), anyString()), never());
+            runtimeMock.verify(() -> TraceRuntime.onHttpInStart(anyString(), anyString(), anyString(), anyBoolean()), never());
         }
     }
 
