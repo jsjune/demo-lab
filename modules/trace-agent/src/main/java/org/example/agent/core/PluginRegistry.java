@@ -16,14 +16,12 @@ public class PluginRegistry {
                 try {
                     plugin.init(null);
                     activePlugins.add(plugin);
-                    System.out.println("[TRACE AGENT] Loaded plugin: " + plugin.pluginId()
-                        + " (order=" + plugin.order() + ")");
+                    AgentLogger.info("Loaded plugin: " + plugin.pluginId() + " (order=" + plugin.order() + ")");
                 } catch (Exception e) {
-                    System.err.println("[TRACE AGENT] Failed to load plugin " + plugin.pluginId()
-                        + ": " + e.getMessage());
+                    AgentLogger.warn("Failed to load plugin " + plugin.pluginId() + ": " + e.getMessage());
                 }
             } else {
-                System.out.println("[TRACE AGENT] Plugin disabled: " + plugin.pluginId());
+                AgentLogger.info("Plugin disabled: " + plugin.pluginId());
             }
         }
         activePlugins.sort(Comparator.comparingInt(TracerPlugin::order));

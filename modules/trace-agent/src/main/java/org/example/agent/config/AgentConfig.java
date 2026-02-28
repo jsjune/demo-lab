@@ -40,7 +40,6 @@ public class AgentConfig {
         if (externalConfig != null && !externalConfig.isEmpty()) {
             try (InputStream is = new FileInputStream(externalConfig)) {
                 props.load(is);
-                System.out.println("[TRACE AGENT] Loaded external config: " + externalConfig);
             } catch (Exception e) {
                 System.err.println("[TRACE AGENT] Failed to load external config '"
                     + externalConfig + "': " + e.getMessage());
@@ -61,10 +60,6 @@ public class AgentConfig {
         String explicitVersion = props.getProperty("spring.version");
         if (explicitVersion != null && !explicitVersion.trim().isEmpty()) {
             resolvedProfile = SpringVersionProfile.fromConfig(explicitVersion);
-            System.out.println("[TRACE AGENT] Spring version configured: " + explicitVersion
-                + " → profile=" + resolvedProfile);
-        } else {
-            System.out.println("[TRACE AGENT] spring.version not set — will auto-detect at transform time.");
         }
     }
 
@@ -92,7 +87,6 @@ public class AgentConfig {
         SpringVersionProfile detected = SpringVersionProfile.detect(loader);
         if (detected != null) {
             resolvedProfile = detected;
-            System.out.println("[TRACE AGENT] Auto-detected Spring profile: " + detected);
         }
     }
 

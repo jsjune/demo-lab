@@ -124,6 +124,7 @@ public class TraceRuntime {
                 extra.put("errorMessage", "HTTP " + statusCode);
             }
             TcpSender.send(createEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP, method + " " + path, durationMs, success, extra));
+            debugLog("[HTTP-IN] " + method + " " + path + " → " + statusCode + " (" + durationMs + "ms) txId=" + txId);
             TxIdHolder.clear();
         });
     }
@@ -143,6 +144,9 @@ public class TraceRuntime {
             extra.put("errorType", t != null ? t.getClass().getSimpleName() : "UnknownError");
             extra.put("errorMessage", t != null ? truncateMessage(t.getMessage()) : null);
             TcpSender.send(createEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP, method + " " + path, durationMs, false, extra));
+            debugLog("[HTTP-IN] " + method + " " + path + " → ERROR "
+                + (t != null ? t.getClass().getSimpleName() : "?")
+                + " (" + durationMs + "ms) txId=" + txId);
             TxIdHolder.clear();
         });
     }
@@ -172,6 +176,9 @@ public class TraceRuntime {
             extra.put("errorType", t != null ? t.getClass().getSimpleName() : "UnknownError");
             extra.put("errorMessage", t != null ? truncateMessage(t.getMessage()) : null);
             TcpSender.send(createEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP, url, durationMs, false, extra));
+            debugLog("[HTTP-OUT] " + method + " " + url + " → ERROR " + statusCode + " "
+                + (t != null ? t.getClass().getSimpleName() : "?")
+                + " (" + durationMs + "ms)");
         });
     }
 
@@ -183,6 +190,7 @@ public class TraceRuntime {
             extra.put("statusCode", statusCode);
             extra.put("method", method);
             TcpSender.send(createEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP, uri, durationMs, statusCode >= 200 && statusCode < 400, extra));
+            debugLog("[HTTP-OUT] " + method + " " + uri + " → " + statusCode + " (" + durationMs + "ms)");
         });
     }
 
@@ -195,6 +203,8 @@ public class TraceRuntime {
             extra.put("topic", topic);
             extra.put("key", key);
             TcpSender.send(createEvent(txId, TraceEventType.MQ_PRODUCE, TraceCategory.MQ, topic, null, true, extra));
+            debugLog("[MQ-PRODUCE] " + brokerType.toUpperCase()
+                + " topic=" + topic + (key != null ? " key=" + key : ""));
         });
     }
 
@@ -239,6 +249,8 @@ public class TraceRuntime {
             extra.put("brokerType", brokerType);
             extra.put("topic", topic);
             TcpSender.send(createEvent(txId, TraceEventType.MQ_CONSUME_END, TraceCategory.MQ, topic, durationMs, true, extra));
+            debugLog("[MQ-CONSUME] " + brokerType.toUpperCase()
+                + " topic=" + topic + " END " + durationMs + "ms txId=" + txId);
             TxIdHolder.clear();
         });
     }
@@ -258,11 +270,16 @@ public class TraceRuntime {
             extra.put("errorType", t != null ? t.getClass().getSimpleName() : "UnknownError");
             extra.put("errorMessage", t != null ? truncateMessage(t.getMessage()) : null);
             TcpSender.send(createEvent(txId, TraceEventType.MQ_CONSUME_END, TraceCategory.MQ, topic, durationMs, false, extra));
+            debugLog("[MQ-CONSUME] " + brokerType.toUpperCase()
+                + " topic=" + topic + " ERROR " + durationMs + "ms "
+                + (t != null ? t.getClass().getSimpleName() : "?")
+                + " txId=" + txId);
             TxIdHolder.clear();
         });
     }
 
     public static void onDbQueryStart(String sql) {
+        debugLog("[DB] START " + sqlPreview(sql));
         emit(TraceEventType.DB_QUERY_START, TraceCategory.DB, truncate(sql), null, true, null);
     }
 
@@ -280,6 +297,9 @@ public class TraceRuntime {
                 extra = new HashMap<>();
                 extra.put("slowQuery", true);
                 extra.put("sql", truncate(sql));
+                AgentLogger.warn("[DB] SLOW " + durationMs + "ms — " + sqlPreview(sql));
+            } else {
+                debugLog("[DB] END " + durationMs + "ms — " + sqlPreview(sql));
             }
             TcpSender.send(createEvent(txId, TraceEventType.DB_QUERY_END, TraceCategory.DB, truncate(sql), durationMs, true, extra));
         });
@@ -297,6 +317,9 @@ public class TraceRuntime {
             Map<String, Object> extra = new LinkedHashMap<>();
             extra.put("errorType", t != null ? t.getClass().getSimpleName() : "UnknownError");
             extra.put("errorMessage", t != null ? truncateMessage(t.getMessage()) : null);
+            debugLog("[DB] ERROR " + durationMs + "ms "
+                + (t != null ? t.getClass().getSimpleName() : "?")
+                + " — " + sqlPreview(sql));
             TcpSender.send(createEvent(txId, TraceEventType.DB_QUERY_END, TraceCategory.DB, truncate(sql), durationMs, false, extra));
         });
     }
@@ -306,6 +329,7 @@ public class TraceRuntime {
             String txId = TxIdHolder.get();
             if (txId == null) return;
             if (sizeBytes < AgentConfig.getMinSizeBytes()) return;
+            debugLog("[FILE] READ " + path + " " + sizeBytes + "B (" + durationMs + "ms)");
             Map<String, Object> extra = new HashMap<>();
             extra.put("sizeBytes", sizeBytes);
             TcpSender.send(createEvent(txId, TraceEventType.FILE_READ, TraceCategory.IO, path, durationMs, success, extra));
@@ -317,6 +341,7 @@ public class TraceRuntime {
             String txId = TxIdHolder.get();
             if (txId == null) return;
             if (sizeBytes < AgentConfig.getMinSizeBytes()) return;
+            debugLog("[FILE] WRITE " + path + " " + sizeBytes + "B (" + durationMs + "ms)");
             Map<String, Object> extra = new HashMap<>();
             extra.put("sizeBytes", sizeBytes);
             TcpSender.send(createEvent(txId, TraceEventType.FILE_WRITE, TraceCategory.IO, path, durationMs, success, extra));
@@ -324,14 +349,17 @@ public class TraceRuntime {
     }
 
     public static void onCacheGet(String key, boolean hit) {
+        debugLog("[CACHE] GET " + key + " → " + (hit ? "HIT" : "MISS"));
         emit(hit ? TraceEventType.CACHE_HIT : TraceEventType.CACHE_MISS, TraceCategory.CACHE, key, null, true, null);
     }
 
     public static void onCacheSet(String key) {
+        debugLog("[CACHE] SET " + key);
         emit(TraceEventType.CACHE_SET, TraceCategory.CACHE, key, null, true, null);
     }
 
     public static void onCacheDel(String key) {
+        debugLog("[CACHE] DEL " + key);
         emit(TraceEventType.CACHE_DEL, TraceCategory.CACHE, key, null, true, null);
     }
 
@@ -434,6 +462,7 @@ public class TraceRuntime {
                 extra.put("errorMessage", "HTTP " + statusCode);
             }
             TcpSender.send(createEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP, uri, durationMs, success, extra));
+            debugLog("[HTTP-OUT] " + method + " " + uri + " → " + statusCode + " (" + durationMs + "ms)");
         });
     }
 
@@ -465,6 +494,9 @@ public class TraceRuntime {
             extra.put("errorType", t != null ? t.getClass().getSimpleName() : "UnknownError");
             extra.put("errorMessage", t != null ? truncateMessage(t.getMessage()) : null);
             TcpSender.send(createEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP, uri, durationMs, false, extra));
+            debugLog("[HTTP-OUT] " + method + " " + uri + " → ERROR " + statusCode + " "
+                + (t != null ? t.getClass().getSimpleName() : "?")
+                + " (" + durationMs + "ms)");
         });
     }
 
@@ -508,6 +540,7 @@ public class TraceRuntime {
 
     private static final int SQL_MAX_LENGTH = 1000;
     private static final int MSG_MAX_LENGTH = 200;
+    private static final int SQL_PREVIEW_LENGTH = 80;
 
     private static String truncate(String text) {
         if (text == null || text.length() <= SQL_MAX_LENGTH) return text;
@@ -517,5 +550,13 @@ public class TraceRuntime {
     private static String truncateMessage(String msg) {
         if (msg == null || msg.length() <= MSG_MAX_LENGTH) return msg;
         return msg.substring(0, MSG_MAX_LENGTH) + "...";
+    }
+
+    private static String sqlPreview(String sql) {
+        if (sql == null) return "null";
+        String trimmed = sql.trim();
+        return trimmed.length() <= SQL_PREVIEW_LENGTH
+            ? trimmed
+            : trimmed.substring(0, SQL_PREVIEW_LENGTH) + "...";
     }
 }

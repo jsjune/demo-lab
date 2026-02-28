@@ -20,6 +20,7 @@ public class TcpSender {
     private static final ObjectMapper mapper = new ObjectMapper();
     private static final AtomicLong dropCounter = new AtomicLong(0);
     private static volatile boolean initialized = false;
+    private static volatile boolean wasConnected = false;
 
     public static synchronized void init() {
         if (initialized) return;
@@ -39,6 +40,14 @@ public class TcpSender {
                         socket = new Socket();
                         socket.connect(new InetSocketAddress(AgentConfig.getCollectorHost(), AgentConfig.getCollectorPort()), 2000);
                         writer = new PrintWriter(socket.getOutputStream(), true);
+                        if (!wasConnected) {
+                            AgentLogger.info("[TCP] Connected to "
+                                + AgentConfig.getCollectorHost() + ":" + AgentConfig.getCollectorPort());
+                            wasConnected = true;
+                        } else {
+                            AgentLogger.info("[TCP] Reconnected to "
+                                + AgentConfig.getCollectorHost() + ":" + AgentConfig.getCollectorPort());
+                        }
                         backoffMs = 1000;
                     }
 

@@ -19,6 +19,21 @@ public class TraceAgent {
             
             AgentLogger.info("Premain started");
 
+            // FR-01: Config summary (assembled here to avoid AgentConfig → AgentLogger circular dependency)
+            AgentLogger.info("Config:"
+                + " server=" + AgentConfig.getServerName()
+                + " collector=" + AgentConfig.getCollectorHost() + ":" + AgentConfig.getCollectorPort()
+                + " sampling=" + AgentConfig.getSamplingRate() + "/" + AgentConfig.getSamplingStrategy()
+                + " slowQueryMs=" + AgentConfig.getSlowQueryMs()
+                + " logLevel=" + AgentConfig.getLogLevel());
+
+            // FR-02: Spring profile initial state
+            if (AgentConfig.isSpringVersionResolved()) {
+                AgentLogger.info("Spring profile: " + AgentConfig.getSpringVersionProfile() + " (explicit config)");
+            } else {
+                AgentLogger.info("Spring profile: pending auto-detect");
+            }
+
             PluginRegistry.load();
 
             // Bootstrap ClassLoader registration must happen BEFORE addTransformer()
@@ -48,6 +63,7 @@ public class TraceAgent {
             AgentLogger.info("Agent Initialized."
                 + " Server: " + AgentConfig.getServerName()
                 + ", Collector: " + AgentConfig.getCollectorHost() + ":" + AgentConfig.getCollectorPort()
+                + ", Spring profile: " + AgentConfig.getSpringVersionProfile()
                 + ", Active plugins: " + PluginRegistry.activePluginIds());
         } catch (Exception e) {
             AgentLogger.error("Failed to initialize agent", e);

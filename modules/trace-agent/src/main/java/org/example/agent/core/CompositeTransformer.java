@@ -62,6 +62,9 @@ public class CompositeTransformer implements ClassFileTransformer {
         // (e.g., HttpPlugin needs servletPackage before instrumenting DispatcherServlet).
         if (loader != null && !AgentConfig.isSpringVersionResolved()) {
             AgentConfig.updateProfileFromLoader(loader);
+            if (AgentConfig.isSpringVersionResolved()) {
+                AgentLogger.info("Spring profile auto-detected: " + AgentConfig.getSpringVersionProfile());
+            }
         }
 
         boolean isExplicitMatch = false;
@@ -93,7 +96,10 @@ public class CompositeTransformer implements ClassFileTransformer {
                     currentBuffer = transformed;
                 }
             } catch (Throwable t) {
-                // Individual transformer failure must not crash the pipeline
+                AgentLogger.debug("[INSTRUMENT] Transform failed"
+                    + " class=" + className
+                    + " transformer=" + transformer.getClass().getSimpleName()
+                    + " error=" + t.getClass().getSimpleName() + ": " + t.getMessage());
             }
         }
         return currentBuffer == classfileBuffer ? null : currentBuffer;

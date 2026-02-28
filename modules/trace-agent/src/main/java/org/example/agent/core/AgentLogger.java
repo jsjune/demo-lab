@@ -5,7 +5,11 @@ import org.example.agent.config.AgentConfig;
 import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.Date;
-import java.util.logging.*;
+import java.util.logging.FileHandler;
+import java.util.logging.Formatter;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 
 /**
  * Internal logger for the trace-agent.
@@ -56,12 +60,6 @@ public class AgentLogger {
             fileHandler.setFormatter(formatter);
             fileHandler.setLevel(level);
             logger.addHandler(fileHandler);
-
-            // 3. Console Handler (always add, but only log SEVERE/INFO unless debug enabled)
-            ConsoleHandler consoleHandler = new ConsoleHandler();
-            consoleHandler.setFormatter(formatter);
-            consoleHandler.setLevel(level);
-            logger.addHandler(consoleHandler);
 
             initialized = true;
             logger.info("Agent Logger initialized (Level: " + levelStr + "). Log file: " + pattern);
