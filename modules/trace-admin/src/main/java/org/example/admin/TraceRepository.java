@@ -90,6 +90,82 @@ public class TraceRepository {
 
     public record ServiceLink(String caller, String callee, String type) {}
 
+    // Dashboard Metrics
+    public record MetricPoint(long timestamp, double value) {}
+
+    public List<MetricPoint> getTpsPoints(int minutes, String serverName) {
+        long startTime = System.currentTimeMillis() - (minutes * 60 * 1000L);
+        StringBuilder sql = new StringBuilder("SELECT (timestamp / 60000) * 60000 AS bucket, COUNT(*) AS val ")
+                .append("FROM trace_events WHERE type = 'HTTP_IN_START' AND timestamp >= ? ");
+        List<Object> params = new ArrayList<>();
+        params.add(startTime);
+        
+        if (serverName != null && !serverName.isEmpty()) {
+            sql.append("AND server_name = ? ");
+            params.add(serverName);
+        }
+        sql.append("GROUP BY bucket ORDER BY bucket ASC");
+        
+        return jdbcTemplate.query(sql.toString(), (rs, rowNum) -> new MetricPoint(
+                rs.getLong("bucket"),
+                rs.getDouble("val")
+        ), params.toArray());
+    }
+
+    public List<MetricPoint> getLatencyPoints(int minutes, String serverName) {
+        long startTime = System.currentTimeMillis() - (minutes * 60 * 1000L);
+        StringBuilder sql = new StringBuilder("SELECT (timestamp / 60000) * 60000 AS bucket, AVG(duration_ms) AS val ")
+                .append("FROM trace_events WHERE type = 'HTTP_IN_END' AND timestamp >= ? ");
+        List<Object> params = new ArrayList<>();
+        params.add(startTime);
+
+        if (serverName != null && !serverName.isEmpty()) {
+            sql.append("AND server_name = ? ");
+            params.add(serverName);
+        }
+        sql.append("GROUP BY bucket ORDER BY bucket ASC");
+
+        return jdbcTemplate.query(sql.toString(), (rs, rowNum) -> new MetricPoint(
+                rs.getLong("bucket"),
+                rs.getDouble("val")
+        ), params.toArray());
+    }
+
+    public List<MetricPoint> getErrorPoints(int minutes, String serverName) {
+        long startTime = System.currentTimeMillis() - (minutes * 60 * 1000L);
+        StringBuilder sql = new StringBuilder("SELECT (timestamp / 60000) * 60000 AS bucket, COUNT(*) AS val ")
+                .append("FROM trace_events WHERE type = 'HTTP_IN_END' AND success = false AND timestamp >= ? ");
+        List<Object> params = new ArrayList<>();
+        params.add(startTime);
+
+        if (serverName != null && !serverName.isEmpty()) {
+            sql.append("AND server_name = ? ");
+            params.add(serverName);
+        }
+        sql.append("GROUP BY bucket ORDER BY bucket ASC");
+
+        return jdbcTemplate.query(sql.toString(), (rs, rowNum) -> new MetricPoint(
+                rs.getLong("bucket"),
+                rs.getDouble("val")
+        ), params.toArray());
+    }
+
+    public List<TraceEvent> findSlowestTraces(int minutes, String serverName, int limit) {
+        long startTime = System.currentTimeMillis() - (minutes * 60 * 1000L);
+        StringBuilder sql = new StringBuilder("SELECT * FROM trace_events WHERE type = 'HTTP_IN_END' AND timestamp >= ? ");
+        List<Object> params = new ArrayList<>();
+        params.add(startTime);
+
+        if (serverName != null && !serverName.isEmpty()) {
+            sql.append("AND server_name = ? ");
+            params.add(serverName);
+        }
+        sql.append("ORDER BY duration_ms DESC LIMIT ?");
+        params.add(limit);
+
+        return jdbcTemplate.query(sql.toString(), rowMapper(), params.toArray());
+    }
+
     // Alert Rule Management
     public record AlertRule(Long id, String name, String category, String thresholdType, double thresholdValue, boolean enabled) {}
 

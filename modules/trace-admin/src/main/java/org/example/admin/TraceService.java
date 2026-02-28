@@ -24,6 +24,20 @@ public class TraceService {
         return traceRepository.findServiceLinks();
     }
 
+    public record MetricSummary(List<TraceRepository.MetricPoint> tps, 
+                                List<TraceRepository.MetricPoint> latency, 
+                                List<TraceRepository.MetricPoint> errors,
+                                List<TraceEvent> slowest) {}
+
+    public MetricSummary getDashboardSummary(int minutes, String serverName) {
+        return new MetricSummary(
+                traceRepository.getTpsPoints(minutes, serverName),
+                traceRepository.getLatencyPoints(minutes, serverName),
+                traceRepository.getErrorPoints(minutes, serverName),
+                traceRepository.findSlowestTraces(minutes, serverName, 5)
+        );
+    }
+
     public List<TraceRepository.AlertRule> getAllAlertRules() {
         return traceRepository.findAllAlertRules();
     }

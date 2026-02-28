@@ -3,6 +3,53 @@
 <body>
 <section>
 
+    <div class="card" style="padding-bottom:1rem;">
+        <div class="card-header">
+            <h2>Real-time Monitoring</h2>
+            <div class="refresh-bar">
+                <span class="refresh-dot active"></span>
+                <span id="metricStatus">Live Tracking</span>
+            </div>
+        </div>
+        <div class="stats-grid">
+            <div class="stat-item">
+                <div class="stat-value" id="currentTps">0.0</div>
+                <div class="stat-label">TPS</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="avgLatency">0ms</div>
+                <div class="stat-label">Avg Latency</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="totalErrors">0</div>
+                <div class="stat-label">60m Errors</div>
+            </div>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1.5rem; margin-top:1.5rem;">
+            <div class="chart-container" style="position: relative; height:200px; width:100%">
+                <canvas id="tpsChart"></canvas>
+            </div>
+            <div class="chart-container" style="position: relative; height:200px; width:100%">
+                <canvas id="latencyChart"></canvas>
+            </div>
+        </div>
+        <div id="slowestTracesSection" style="margin-top:1.5rem; display:none;">
+            <h4 style="margin-bottom:0.5rem; color:var(--secondary-color); font-size:0.85rem;">Top 5 Slowest Requests (Last 60m)</h4>
+            <table style="font-size:0.8rem; background: #f8fafc; border-radius: 0.375rem; border:1px solid var(--border-color);">
+                <thead>
+                    <tr style="background:#f1f5f9">
+                        <th>Server</th>
+                        <th>Target</th>
+                        <th>Duration</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="slowestTracesList">
+                </tbody>
+            </table>
+        </div>
+    </div>
+
     <!-- ── Search card ─────────────────────────────── -->
     <div class="card">
         <div class="card-header">
@@ -239,7 +286,129 @@
         }
 
         // ── Init ──────────────────────────────────────────────────────────────
+        let tpsChart = null;
+        let latencyChart = null;
+
+        function updateMetrics() {
+            const serverName = document.querySelector('input[name="serverName"]').value;
+            let url = '/api/metrics/summary?minutes=60';
+            if (serverName) url += '&serverName=' + encodeURIComponent(serverName);
+
+            fetch(url)
+                .then(r => r.json())
+                .then(data => {
+                    renderCharts(data);
+                    updateSummaryCards(data);
+                    renderSlowestTraces(data.slowest);
+                })
+                .catch(err => console.error('Failed to update metrics', err));
+        }
+
+        function renderSlowestTraces(slowest) {
+            const container = document.getElementById('slowestTracesSection');
+            const list = document.getElementById('slowestTracesList');
+            if (!slowest || slowest.length === 0) {
+                container.style.display = 'none';
+                return;
+            }
+            container.style.display = 'block';
+            list.innerHTML = slowest.map(s => `
+                <tr>
+                    <td>${s.serverName}</td>
+                    <td class="target-cell" title="${s.target}">${s.target}</td>
+                    <td style="font-family:monospace; font-weight:700; color:var(--error-color)">${s.durationMs}ms</td>
+                    <td><a href="/trace/${s.txId}" class="btn btn-ghost btn-sm" style="padding:0.1rem 0.5rem">Detail</a></td>
+                </tr>
+            `).join('');
+        }
+
+        function updateSummaryCards(data) {
+            const currentTps = data.tps.length > 0 ? (data.tps[data.tps.length - 1].value / 60).toFixed(1) : "0.0";
+            const avgLatency = data.latency.length > 0 ? (data.latency.reduce((a,b) => a + b.value, 0) / data.latency.length).toFixed(0) : "0";
+            const totalErrors = data.errors.length > 0 ? data.errors.reduce((a,b) => a + b.value, 0).toFixed(0) : "0";
+
+            document.getElementById('currentTps').textContent = currentTps;
+            document.getElementById('avgLatency').textContent = avgLatency + "ms";
+            document.getElementById('totalErrors').textContent = totalErrors;
+        }
+
+        function renderCharts(data) {
+            const labels = data.tps.map(p => {
+                const d = new Date(p.timestamp);
+                return d.getHours() + ":" + String(d.getMinutes()).padStart(2, '0');
+            });
+
+            const tpsCtx = document.getElementById('tpsChart').getContext('2d');
+            const latencyCtx = document.getElementById('latencyChart').getContext('2d');
+
+            if (tpsChart) tpsChart.destroy();
+            if (latencyChart) latencyChart.destroy();
+
+            tpsChart = new Chart(tpsCtx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'TPS (Requests/min)',
+                            data: data.tps.map(p => p.value),
+                            borderColor: '#2563eb',
+                            backgroundColor: 'rgba(37, 99, 235, 0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 0
+                        },
+                        {
+                            label: 'Errors',
+                            data: data.errors.map(p => p.value),
+                            borderColor: '#ef4444',
+                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 0
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false }, title: { display: true, text: 'TPS & Errors', font: { size: 12 } } },
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: '#f1f5f9' }, ticks: { font: { size: 10 } } },
+                        x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 0 } }
+                    }
+                }
+            });
+
+            latencyChart = new Chart(latencyCtx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Latency (ms)',
+                        data: data.latency.map(p => p.value),
+                        borderColor: '#059669',
+                        backgroundColor: 'rgba(5, 150, 105, 0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false }, title: { display: true, text: 'Avg Latency (ms)', font: { size: 12 } } },
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: '#f1f5f9' }, ticks: { font: { size: 10 } } },
+                        x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 0 } }
+                    }
+                }
+            });
+        }
+
         document.addEventListener('DOMContentLoaded', function () {
+            updateMetrics();
+            setInterval(updateMetrics, 30000); // Update every 30s
             groupByTxId();
             applyFilters();
         });

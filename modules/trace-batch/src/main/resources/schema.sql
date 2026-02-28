@@ -19,3 +19,6 @@ CREATE TABLE IF NOT EXISTS trace_events_default PARTITION OF trace_events DEFAUL
 
 -- Index for tx_id
 CREATE INDEX IF NOT EXISTS idx_trace_events_tx_id ON trace_events(tx_id);
+
+-- Index for monitoring metrics (TPS, Latency, Error Rate)
+CREATE INDEX IF NOT EXISTS idx_trace_events_metrics ON trace_events(timestamp, type);

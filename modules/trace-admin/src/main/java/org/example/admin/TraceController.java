@@ -58,6 +58,13 @@ public class TraceController {
         return traceService.getServiceLinks();
     }
 
+    @GetMapping("/api/metrics/summary")
+    @ResponseBody
+    public TraceService.MetricSummary metricsSummaryApi(@RequestParam(defaultValue = "60") int minutes,
+                                                        @RequestParam(required = false) String serverName) {
+        return traceService.getDashboardSummary(minutes, serverName);
+    }
+
     @GetMapping("/alerts")
     public String alerts(Model model) {
         model.addAttribute("rules", traceService.getAllAlertRules());

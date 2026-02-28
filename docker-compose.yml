@@ -1,7 +1,7 @@
 services:
-  postgres:
+  demo-lab-postgres:
     image: postgres:17-alpine
-    container_name: postgres
+    container_name: demo-lab-postgres
     ports:
       - "5432:5432"
     environment:
@@ -11,9 +11,9 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-  kafka:
+  demo-lab-kafka:
     image: apache/kafka:4.0.0
-    container_name: kafka
+    container_name: demo-lab-kafka
     ports:
       - "9092:9092"
     environment:
@@ -21,9 +21,9 @@ services:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: 'broker,controller'
       KAFKA_LISTENERS: 'PLAINTEXT://:29092,CONTROLLER://:29093,PLAINTEXT_HOST://:9092'
-      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://demo-lab-kafka:29092,PLAINTEXT_HOST://localhost:9092'
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
-      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:29093'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@demo-lab-kafka:29093'
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
       KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
@@ -34,16 +34,25 @@ services:
       KAFKA_LOG_DIRS: '/tmp/kafka-logs'
 
 
-  kafbat-ui:
+  demo-lab-kafbat-ui:
     image: kafbat/kafka-ui:latest
-    container_name: kafbat
+    container_name: demo-lab-kafbat
     ports:
       - "8888:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: demo-lab-kafka:29092
     depends_on:
-      - kafka
+      - demo-lab-kafka
+
+  demo-lab-redis:
+    image: redis:7-alpine
+    container_name: demo-lab-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
 
 volumes:
   postgres_data:
+  redis_data:

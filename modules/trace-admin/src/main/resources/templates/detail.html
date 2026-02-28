@@ -45,46 +45,21 @@
 
     <!-- ── Gantt chart ──────────────────────────────── -->
     <div class="card">
-        <h3>Timeline (Gantt Chart)</h3>
-        <div class="gantt-chart" th:if="${not #lists.isEmpty(events)}">
-            <div th:with="minTime=${events[0].timestamp},
-                          totalDuration=${events[events.size()-1].timestamp - events[0].timestamp > 0
-                                          ? events[events.size()-1].timestamp - events[0].timestamp
-                                          : 100}">
-
-                <!-- Time ruler -->
-                <div class="gantt-ruler">
-                    <div class="gantt-ruler-label">0ms</div>
-                    <div class="gantt-ruler-label" th:text="${totalDuration / 2} + 'ms'"></div>
-                    <div class="gantt-ruler-label" th:text="${totalDuration} + 'ms'"></div>
+        <div class="card-header">
+            <h3>Timeline (Logical Hierarchy)</h3>
+            <div class="refresh-bar">
+                <span class="refresh-dot"></span>
+                <span id="timelineMsg">Processing events...</span>
+            </div>
+        </div>
+        
+        <div id="ganttContainer" class="gantt-chart">
+            <div class="gantt-container">
+                <div class="gantt-header" id="ganttRuler">
+                    <!-- JS Populated Ruler -->
                 </div>
-
-                <!-- One row per event -->
-                <div th:each="event : ${events}" class="gantt-row"
-                     th:with="catColor=${event.category.name() == 'HTTP' ? '#2563eb'
-                                       : (event.category.name() == 'DB'    ? '#059669'
-                                       : (event.category.name() == 'CACHE' ? '#d97706'
-                                       : (event.category.name() == 'MQ'    ? '#7c3aed' : '#64748b')))}">
-                    <div class="gantt-label">
-                        <div class="gantt-label-server" th:text="${event.serverName}"></div>
-                        <div class="gantt-label-type"   th:text="${event.type}"></div>
-                    </div>
-                    <div class="gantt-bar-container">
-                        <!-- Duration bar (END events) -->
-                        <div th:if="${event.durationMs != null}"
-                             th:class="${event.success} ? 'gantt-bar bar-ok' : 'gantt-bar bar-err'"
-                             th:style="${'left:' + (event.timestamp - event.durationMs - minTime) * 100.0 / totalDuration
-                                        + '%;width:' + (event.durationMs * 100.0 / totalDuration)
-                                        + '%;' + (event.success ? 'background-color:' + catColor + ';' : '')}"
-                             th:title="${event.target + ' (' + event.durationMs + 'ms)'}">
-                        </div>
-                        <!-- Marker (START events — no duration) -->
-                        <div th:if="${event.durationMs == null}"
-                             class="gantt-marker"
-                             th:style="${'left:' + (event.timestamp - minTime) * 100.0 / totalDuration + '%'}"
-                             th:title="${event.type + ': ' + event.target}">
-                        </div>
-                    </div>
+                <div class="gantt-body" id="ganttBody">
+                    <!-- JS Populated Rows -->
                 </div>
             </div>
         </div>
@@ -92,6 +67,9 @@
             No events found for this transaction.
         </p>
     </div>
+
+    <!-- Tooltip element -->
+    <div id="spanTooltip" class="span-tooltip"></div>
 
     <!-- ── Event list ────────────────────────────────── -->
     <div class="card">
@@ -162,23 +140,34 @@
     </div>
 
     <script th:inline="javascript">
+        // Data injected from server
+        window.rawEvents = /*[[${events}]]*/ [];
+        window.txId = /*[[${txId}]]*/ "";
+    </script>
+
+    <script>
         // ── Summary stats (computed from DOM) ─────────────────────────────────
         document.addEventListener('DOMContentLoaded', function () {
+            const events = window.rawEvents || [];
+            if (events.length === 0) return;
+
+            renderGantt(events);
+
             const rows    = document.querySelectorAll('#eventTable tbody tr[data-server]');
             let errs      = 0;
             const servers = new Set();
             const errorItems = [];
 
-            /*[# th:each="event : ${events}"]*/
-            if (!/*[[${event.success}]]*/) {
-                errorItems.push({
-                    server: /*[[${event.serverName}]]*/,
-                    type: /*[[${event.type}]]*/,
-                    msg: /*[[${event.extraInfo.get('errorMessage') != null ? event.extraInfo.get('errorMessage') : 'Unknown error'}]]*/,
-                    errorType: /*[[${event.extraInfo.get('errorType') != null ? event.extraInfo.get('errorType') : 'Error'}]]*/
-                });
-            }
-            /*[/]*/
+            events.forEach(event => {
+                if (!event.success) {
+                    errorItems.push({
+                        server: event.serverName,
+                        type: event.type,
+                        msg: (event.extraInfo && event.extraInfo.errorMessage) || 'Unknown error',
+                        errorType: (event.extraInfo && event.extraInfo.errorType) || 'Error'
+                    });
+                }
+            });
 
             rows.forEach(r => {
                 if (r.dataset.success === 'false') errs++;
@@ -211,6 +200,180 @@
             }
         });
 
+        // ── Gantt Rendering Logic ───────────────────────────────────────────
+        function renderGantt(events) {
+            const container = document.getElementById('ganttBody');
+            const ruler = document.getElementById('ganttRuler');
+            const msgEl = document.getElementById('timelineMsg');
+            
+            if (!container || events.length === 0) return;
+
+            // 1. Convert flat events to Spans
+            // Since we have durationMs in END events, we can reconstruct the span.
+            // Some events (MQ_PRODUCE, CACHE_SET) are markers (point in time).
+            const minTime = events[0].timestamp;
+            const maxTime = events[events.length - 1].timestamp;
+            const totalDuration = Math.max(maxTime - minTime, 1);
+
+            const spans = [];
+            events.forEach(e => {
+                if (e.durationMs !== null) {
+                    // It's an END event with duration
+                    spans.push({
+                        id: e.eventId,
+                        server: e.serverName,
+                        category: e.category,
+                        type: e.type,
+                        target: e.target,
+                        start: e.timestamp - e.durationMs,
+                        end: e.timestamp,
+                        duration: e.durationMs,
+                        success: e.success,
+                        extra: e.extraInfo
+                    });
+                } else {
+                    // Marker event (START or instant)
+                    spans.push({
+                        id: e.eventId,
+                        server: e.serverName,
+                        category: e.category,
+                        type: e.type,
+                        target: e.target,
+                        start: e.timestamp,
+                        end: e.timestamp,
+                        duration: 0,
+                        success: e.success,
+                        extra: e.extraInfo
+                    });
+                }
+            });
+
+            // 2. Sort by start time and duration (desc)
+            spans.sort((a, b) => (a.start - b.start) || (b.duration - a.duration));
+
+            // 3. Calculate Depth & Error Propagation
+            spans.forEach((span, i) => {
+                let depth = 0;
+                span.hasChildError = false;
+                for (let j = i - 1; j >= 0; j--) {
+                    const prev = spans[j];
+                    if (span.start >= prev.start && span.end <= prev.end && prev.duration > 0) {
+                        depth = prev.depth + 1;
+                        span.parentId = prev.id;
+                        break;
+                    }
+                }
+                span.depth = depth;
+            });
+
+            // 3.1 Reverse pass for error propagation (if child failed, mark parents)
+            for (let i = spans.length - 1; i >= 0; i--) {
+                const s = spans[i];
+                if (!s.success || s.hasChildError) {
+                    let parent = spans.find(p => p.id === s.parentId);
+                    if (parent) parent.hasChildError = true;
+                }
+            }
+
+            // 4. Render Ruler
+            const steps = 5;
+            let rulerHtml = `<div class="gantt-ruler">`;
+            for (let i = 0; i <= steps; i++) {
+                const time = Math.round((totalDuration / steps) * i);
+                rulerHtml += `<div class="gantt-ruler-label">${time}ms</div>`;
+            }
+            rulerHtml += `</div>`;
+            ruler.innerHTML = rulerHtml;
+
+            // 5. Render Spans
+            const catColors = {
+                'HTTP': '#2563eb',
+                'DB': '#059669',
+                'CACHE': '#d97706',
+                'MQ': '#7c3aed',
+                'IO': '#64748b'
+            };
+
+            const html = spans.map(s => {
+                const left = ((s.start - minTime) / totalDuration) * 100;
+                const width = Math.max((s.duration / totalDuration) * 100, 0.2);
+                const color = catColors[s.category] || '#64748b';
+                
+                return `
+                <div class="gantt-row depth-${s.depth}" style="--depth-offset: ${s.depth * 1.5}rem">
+                    ${s.depth > 0 ? `<div class="connector-v" style="--depth-offset: ${s.depth * 1.5}rem"></div>` : ''}
+                    <div class="gantt-label">
+                        <div class="gantt-label-server" title="${s.server}">
+                            ${s.hasChildError && s.success ? '<span style="color:var(--error-color); margin-right:4px;">⚠️</span>' : ''}
+                            ${s.server}
+                        </div>
+                        <div class="gantt-label-type">
+                            <span class="cat-badge cat-${s.category}" style="padding:0 4px; font-size:0.6rem;">${s.category}</span>
+                            ${s.type.replace('_END', '').replace('_START', '')}
+                        </div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        ${s.duration > 0 ? `
+                            <div class="gantt-bar ${s.success ? '' : 'bar-err'}" 
+                                 style="left: ${left}%; width: ${width}%; background-color: ${color}"
+                                 onmouseover="showTooltip(event, ${JSON.stringify(s).replace(/"/g, '&quot;')})"
+                                 onmouseout="hideTooltip()">
+                            </div>
+                        ` : `
+                            <div class="gantt-marker" style="left: ${left}%"
+                                 onmouseover="showTooltip(event, ${JSON.stringify(s).replace(/"/g, '&quot;')})"
+                                 onmouseout="hideTooltip()">
+                            </div>
+                        `}
+                    </div>
+                </div>`;
+            }).join('');
+
+            container.innerHTML = html;
+            msgEl.textContent = `${spans.length} spans processed`;
+            document.querySelector('.refresh-dot').classList.add('active');
+        }
+
+        // ── Tooltip Helpers ───────────────────────────────────────────────
+        const tooltip = document.getElementById('spanTooltip');
+        function showTooltip(e, span) {
+            let extraHtml = '';
+            if (span.extra) {
+                Object.entries(span.extra).forEach(([k, v]) => {
+                    if (v) extraHtml += `<div style="font-size:0.65rem; color:#94a3b8; margin-top:2px;"><strong>${k}:</strong> ${v}</div>`;
+                });
+            }
+
+            tooltip.innerHTML = `
+                <strong style="color:#fff">${span.type}</strong>
+                <div class="tooltip-target" style="color:#cbd5e1; margin-bottom:4px;">${span.target}</div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span class="badge ${span.success ? 'badge-success' : 'badge-error'}" style="padding:1px 4px;">
+                        ${span.success ? 'OK' : 'ERR'}
+                    </span>
+                    <span style="font-family:monospace;">${span.duration}ms</span>
+                </div>
+                ${extraHtml}
+            `;
+            tooltip.style.display = 'block';
+            updateTooltipPos(e);
+        }
+
+        function hideTooltip() {
+            tooltip.style.display = 'none';
+        }
+
+        function updateTooltipPos(e) {
+            tooltip.style.left = (e.pageX + 15) + 'px';
+            tooltip.style.top = (e.pageY + 15) + 'px';
+        }
+
+        window.addEventListener('mousemove', (e) => {
+            if (tooltip.style.display === 'block') {
+                updateTooltipPos(e);
+            }
+        });
+
         // ── Expand / collapse extra info rows ─────────────────────────────────
         document.addEventListener('click', function (e) {
             if (!e.target.classList.contains('btn-extra')) return;
@@ -222,6 +385,3 @@
             e.target.textContent = hidden ? '−' : '+';
         });
     </script>
-</section>
-</body>
-</html>
