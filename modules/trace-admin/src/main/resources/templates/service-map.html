@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html(content=~{::section})}">
+<body>
+<section>
+    <div class="card">
+        <h2>Service Interaction Map</h2>
+        <p style="color: var(--secondary-color); font-size: 0.875rem; margin-bottom: 1rem;">
+            Visualization of service-to-service calls based on trace data (HTTP/MQ).
+        </p>
+        <div id="service-map-container" style="background: #fff; border: 1px solid var(--border-color); border-radius: 0.5rem; padding: 2rem; min-height: 500px; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+            <div id="loading-status" style="margin-bottom: 1rem; color: var(--secondary-color);">Loading service data...</div>
+            <pre class="mermaid" id="mermaid-graph" style="visibility: hidden;">
+                graph LR
+                %% Initializing
+            </pre>
+            <div id="error-message" style="color: var(--error-color); display: none; text-align: center;">
+                <p>Failed to render service map.</p>
+                <pre id="debug-data" style="background: #f1f5f9; padding: 1rem; margin-top: 1rem; font-size: 0.75rem; text-align: left;"></pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- Use standard script tag for mermaid -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js"></script>
+    <script th:inline="javascript">
+        mermaid.initialize({ 
+            startOnLoad: false, 
+            theme: 'base',
+            themeVariables: {
+                primaryColor: '#2563eb',
+                edgeLabelBackground: '#ffffff',
+                tertiaryColor: '#f8fafc'
+            }
+        });
+
+        async function loadServiceMap() {
+            const status = document.getElementById('loading-status');
+            const graphEl = document.getElementById('mermaid-graph');
+            const errorEl = document.getElementById('error-message');
+            const debugEl = document.getElementById('debug-data');
+
+            try {
+                const response = await fetch('/api/service-map');
+                if (!response.ok) throw new Error('API request failed');
+                
+                const links = await response.json();
+                console.log('Service Links:', links);
+
+                if (links.length === 0) {
+                    status.textContent = 'No service interactions detected yet. Execute some requests first!';
+                    return;
+                }
+
+                let graphDefinition = 'graph LR\n';
+                const seen = new Set();
+
+                links.forEach(link => {
+                    const key = `${link.caller}-${link.callee}-${link.type}`;
+                    if (!seen.has(key)) {
+                        const label = link.type === 'MQ' ? '-- MQ -->' : (link.type === 'CACHE' ? '-. Cache .->' : '== HTTP ==>');
+                        graphDefinition += `  ${link.caller}[${link.caller}] ${label} ${link.callee}[${link.callee}]\n`;
+                        seen.add(key);
+                    }
+                });
+
+                status.style.display = 'none';
+                graphEl.textContent = graphDefinition;
+                graphEl.style.visibility = 'visible';
+                
+                await mermaid.run({
+                    nodes: [graphEl]
+                });
+
+            } catch (err) {
+                console.error('Mermaid Render Error:', err);
+                status.style.display = 'none';
+                errorEl.style.display = 'block';
+                debugEl.textContent = err.message;
+            }
+        }
+
+        // Wait for DOM
+        document.addEventListener('DOMContentLoaded', loadServiceMap);
+    </script>
+</section>
+</body>
+</html>

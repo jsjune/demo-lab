@@ -1,0 +1,24 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.4.3'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    implementation 'org.springframework.kafka:spring-kafka'
+    runtimeOnly 'com.h2database:h2'
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+bootRun {
+    jvmArgs "-javaagent:${project.rootDir}/modules/trace-agent/build/libs/trace-agent-0.0.1-SNAPSHOT.jar",
+            "-Dtrace.agent.server-name=sample-crud-app",
+            "-Dtrace.agent.collector.host=localhost",
+            "-Dtrace.agent.collector.port=9090",
+            "-Dtrace.agent.sampling.rate=1.0"
+}

@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html(content=~{::section})}">
+<body>
+<section>
+
+    <!-- ── Search card ─────────────────────────────── -->
+    <div class="card">
+        <div class="card-header">
+            <h2>Search Traces</h2>
+            <div class="refresh-bar">
+                <span class="refresh-dot" id="refreshDot"></span>
+                <span id="refreshCountdown" style="min-width:2.5em; text-align:right;"></span>
+                <button class="btn-ghost btn-sm" id="refreshToggle" onclick="toggleRefresh()">Auto Refresh: OFF</button>
+            </div>
+        </div>
+        <form th:action="@{/}" method="get" class="search-form">
+            <div class="form-group">
+                <label>Transaction ID</label>
+                <input type="text" name="txId" th:value="${txId}" placeholder="tx-...">
+            </div>
+            <div class="form-group">
+                <label>Server Name</label>
+                <input type="text" name="serverName" th:value="${serverName}" placeholder="server-...">
+            </div>
+            <button type="submit">Search</button>
+            <a th:href="@{/}" class="btn btn-ghost" style="text-decoration:none;">Reset</a>
+        </form>
+    </div>
+
+    <!-- ── Trace list card ─────────────────────────── -->
+    <div class="card">
+        <div class="card-header">
+            <h2>Recent Traces</h2>
+        </div>
+
+        <!-- Filter bar -->
+        <div class="filter-bar">
+            <span class="filter-label">Status:</span>
+            <button class="filter-chip active" id="chip-all-status" onclick="setStatusFilter('all')">All</button>
+            <button class="filter-chip chip-ok"  id="chip-ok"         onclick="setStatusFilter('ok')">OK</button>
+            <button class="filter-chip chip-err" id="chip-err"        onclick="setStatusFilter('err')">ERR</button>
+            <div class="filter-sep"></div>
+            <span class="filter-label">Category:</span>
+            <button class="filter-chip active"    id="chip-all-cat"   onclick="setCatFilter('all')">All</button>
+            <button class="filter-chip chip-http" id="chip-http"      onclick="setCatFilter('HTTP')">HTTP</button>
+            <button class="filter-chip chip-db"   id="chip-db"        onclick="setCatFilter('DB')">DB</button>
+            <button class="filter-chip chip-cache" id="chip-cache"    onclick="setCatFilter('CACHE')">CACHE</button>
+            <button class="filter-chip chip-mq"   id="chip-mq"        onclick="setCatFilter('MQ')">MQ</button>
+            <button class="filter-chip chip-io"   id="chip-io"        onclick="setCatFilter('IO')">IO</button>
+        </div>
+
+        <div class="result-count" id="resultCount"></div>
+
+        <table id="traceTable">
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>TX ID</th>
+                    <th>Server</th>
+                    <th>Category</th>
+                    <th>Type</th>
+                    <th>Target</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr th:each="trace : ${traces}"
+                    th:classappend="${trace.success} ? '' : ' row-err'"
+                    th:attr="data-status=${trace.success ? 'ok' : 'err'}, data-cat=${trace.category}, data-txid=${trace.txId}">
+                    <td th:text="${#dates.format(new java.util.Date(trace.timestamp), 'MM-dd HH:mm:ss')}"></td>
+                    <td>
+                        <div class="tx-id-cell">
+                            <span class="tx-id-short"
+                                  th:text="${trace.txId}"
+                                  th:title="${trace.txId}"></span>
+                            <button class="btn-copy" th:attr="data-txid=${trace.txId}">copy</button>
+                        </div>
+                    </td>
+                    <td th:text="${trace.serverName}"></td>
+                    <td>
+                        <span class="cat-badge"
+                              th:classappend="'cat-' + ${trace.category}"
+                              th:text="${trace.category}"></span>
+                    </td>
+                    <td th:text="${trace.type}"></td>
+                    <td class="target-cell" th:text="${trace.target}" th:title="${trace.target}"></td>
+                    <td>
+                        <span th:class="${trace.success} ? 'badge badge-success' : 'badge badge-error'"
+                              th:text="${trace.success} ? 'OK' : 'ERR'"></span>
+                    </td>
+                    <td>
+                        <a th:href="@{/trace/{id}(id=${trace.txId})}"
+                           class="btn btn-ghost btn-sm"
+                           style="text-decoration:none;">Detail</a>
+                    </td>
+                </tr>
+                <tr th:if="${#lists.isEmpty(traces)}">
+                    <td colspan="8" style="text-align:center; padding:2rem; color:var(--secondary-color);">
+                        No traces found.
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        // ── Filter logic ──────────────────────────────────────────────────────
+        let statusFilter = 'all';
+        let catFilter    = 'all';
+
+        function applyFilters() {
+            const rows = document.querySelectorAll('#traceTable tbody tr[data-status]');
+            let visible = 0;
+            rows.forEach(row => {
+                const filterMatch = (statusFilter === 'all' || row.dataset.status === statusFilter)
+                                 && (catFilter    === 'all' || row.dataset.cat    === catFilter);
+                const groupHidden = row.dataset.groupHidden === 'true';
+                row.style.display = (filterMatch && !groupHidden) ? '' : 'none';
+                if (filterMatch && !groupHidden) visible++;
+            });
+            const total = rows.length;
+            const el = document.getElementById('resultCount');
+            el.textContent = visible === total
+                ? `${total} trace${total !== 1 ? 's' : ''}`
+                : `${visible} / ${total} traces (filtered)`;
+        }
+
+        function setStatusFilter(val) {
+            statusFilter = val;
+            ['chip-all-status', 'chip-ok', 'chip-err'].forEach(id =>
+                document.getElementById(id).classList.remove('active'));
+            const map = { all: 'chip-all-status', ok: 'chip-ok', err: 'chip-err' };
+            document.getElementById(map[val]).classList.add('active');
+            applyFilters();
+        }
+
+        function setCatFilter(val) {
+            catFilter = val;
+            ['chip-all-cat','chip-http','chip-db','chip-cache','chip-mq','chip-io'].forEach(id =>
+                document.getElementById(id).classList.remove('active'));
+            const map = { all:'chip-all-cat', HTTP:'chip-http', DB:'chip-db',
+                          CACHE:'chip-cache', MQ:'chip-mq', IO:'chip-io' };
+            const el = document.getElementById(map[val]);
+            if (el) el.classList.add('active');
+            applyFilters();
+        }
+
+        // ── TX ID grouping (same TX ID → collapsed by default, click to toggle) ──
+        function groupByTxId() {
+            const rows = Array.from(document.querySelectorAll('#traceTable tbody tr[data-txid]'));
+            const groups = new Map();   // txId → [rows]
+
+            rows.forEach(row => {
+                const id = row.dataset.txid;
+                if (!groups.has(id)) groups.set(id, []);
+                groups.get(id).push(row);
+            });
+
+            groups.forEach((group, txId) => {
+                if (group.length <= 1) return;
+
+                // Mark child rows as group-hidden
+                group.slice(1).forEach(r => { r.dataset.groupHidden = 'true'; });
+
+                // Add toggle badge to the first row's TX ID cell
+                const headerRow = group[0];
+                const txIdCell  = headerRow.querySelector('.tx-id-cell');
+                if (!txIdCell) return;
+
+                const badge = document.createElement('span');
+                badge.className    = 'group-badge';
+                badge.textContent  = '+' + (group.length - 1);
+                txIdCell.appendChild(badge);
+
+                const toggleGroup = (e) => {
+                    e.stopPropagation();
+                    const children = group.slice(1);
+                    const isCollapsed = children[0].dataset.groupHidden === 'true';
+                    children.forEach(r => { r.dataset.groupHidden = isCollapsed ? 'false' : 'true'; });
+                    badge.textContent = isCollapsed ? '−' + (group.length - 1) : '+' + (group.length - 1);
+                    badge.classList.toggle('expanded', isCollapsed);
+                    applyFilters();
+                };
+
+                badge.addEventListener('click', toggleGroup);
+                // Also make the TX ID short text itself clickable for toggle
+                const shortEl = txIdCell.querySelector('.tx-id-short');
+                if (shortEl) {
+                    shortEl.style.cursor = 'pointer';
+                    shortEl.title = shortEl.title + ' (click to expand ' + (group.length - 1) + ' more)';
+                    shortEl.addEventListener('click', toggleGroup);
+                }
+            });
+        }
+
+        // ── Copy TX ID ────────────────────────────────────────────────────────
+        document.addEventListener('click', function(e) {
+            if (!e.target.classList.contains('btn-copy')) return;
+            const txId = e.target.dataset.txid;
+            if (!txId) return;
+            navigator.clipboard.writeText(txId).then(() => {
+                e.target.textContent = '✓';
+                e.target.classList.add('copied');
+                setTimeout(() => {
+                    e.target.textContent = 'copy';
+                    e.target.classList.remove('copied');
+                }, 1500);
+            }).catch(() => {});
+        });
+
+        // ── Auto-refresh ──────────────────────────────────────────────────────
+        let refreshTimer  = null;
+        let countdown     = 30;
+        let refreshActive = false;
+
+        function toggleRefresh() {
+            refreshActive = !refreshActive;
+            const btn = document.getElementById('refreshToggle');
+            const dot = document.getElementById('refreshDot');
+            if (refreshActive) {
+                btn.textContent = 'Auto Refresh: ON';
+                dot.classList.add('active');
+                countdown = 30;
+                tick();
+            } else {
+                btn.textContent = 'Auto Refresh: OFF';
+                dot.classList.remove('active');
+                document.getElementById('refreshCountdown').textContent = '';
+                clearTimeout(refreshTimer);
+            }
+        }
+
+        function tick() {
+            document.getElementById('refreshCountdown').textContent = countdown + 's';
+            if (countdown <= 0) { location.reload(); return; }
+            countdown--;
+            refreshTimer = setTimeout(tick, 1000);
+        }
+
+        // ── Init ──────────────────────────────────────────────────────────────
+        document.addEventListener('DOMContentLoaded', function () {
+            groupByTxId();
+            applyFilters();
+        });
+    </script>
+</section>
+</body>
+</html>

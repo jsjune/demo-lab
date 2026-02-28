@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS alert_rules (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    category VARCHAR(20) NOT NULL,
+    threshold_type VARCHAR(20) NOT NULL,
+    threshold_value DOUBLE PRECISION NOT NULL,
+    enabled BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

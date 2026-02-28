@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Distributed Trace Admin</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1><a th:href="@{/}">Trace Admin</a></h1>
+            <nav>
+                <ul>
+                    <li><a th:href="@{/}">Dashboard</a></li>
+                    <li><a th:href="@{/service-map}">Service Map</a></li>
+                    <li><a th:href="@{/alerts}">Alerts</a></li>
+                </ul>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <div th:replace="${content}"></div>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2026 Distributed Tracing System</p>
+        </div>
+    </footer>
+
+    <script>
+        // Active nav link based on current path
+        (function () {
+            const path = window.location.pathname;
+            document.querySelectorAll('nav a').forEach(function (a) {
+                const href = a.getAttribute('href');
+                const match = href === '/' ? path === '/' : path.startsWith(href);
+                if (match) a.classList.add('active');
+            });
+        })();
+    </script>
+</body>
+</html>

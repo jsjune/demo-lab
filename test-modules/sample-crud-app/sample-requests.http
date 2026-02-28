@@ -1,0 +1,107 @@
+### Sample CRUD App API Tests
+@host = http://localhost:8000
+
+# ============================================================
+# Basic CRUD
+# ============================================================
+
+### 1. Create a user  →  DB_QUERY + MQ_PRODUCE
+POST {{host}}/users
+Content-Type: application/json
+
+{
+  "name": "John Doe",
+  "email": "john@example.com"
+}
+
+###
+
+### 2. Create another user
+POST {{host}}/users
+Content-Type: application/json
+
+{
+  "name": "Jane Smith",
+  "email": "jane@example.com"
+}
+
+###
+
+### 3. Get all users  →  DB_QUERY
+GET {{host}}/users
+
+###
+
+### 4. Get user by ID  →  DB_QUERY
+GET {{host}}/users/1
+
+###
+
+### 5. Update user  →  DB_QUERY + CACHE_DEL + MQ_PRODUCE
+PUT {{host}}/users/1
+Content-Type: application/json
+
+{
+  "name": "John Updated",
+  "email": "john.updated@example.com"
+}
+
+###
+
+### 6. Delete user  →  DB_QUERY + CACHE_DEL + MQ_PRODUCE
+DELETE {{host}}/users/2
+
+# ============================================================
+# Cache (Redis)
+# ============================================================
+
+### 7. Cache MISS then HIT  →  CACHE_MISS + DB_QUERY + CACHE_SET / CACHE_HIT
+# Run twice: first call = MISS (DB lookup + cache write), second = HIT (cache only)
+GET {{host}}/users/cache/1
+
+# ============================================================
+# Kafka
+# ============================================================
+
+### 8. Send Kafka message  →  MQ_PRODUCE + MQ_CONSUME (async)
+POST {{host}}/users/message?msg=HelloTracing
+
+# ============================================================
+# HTTP out (RestTemplate)
+# ============================================================
+
+### 9. External HTTP call (self)  →  HTTP_OUT OK
+GET {{host}}/users/external
+
+### 10. Trigger outbound HTTP error  →  HTTP_OUT ERR (errorType + errorMessage)
+GET {{host}}/users/trigger-http-error
+
+# ============================================================
+# Trace scenario samples
+# ============================================================
+
+### 11. Full chain  →  HTTP_IN + DB_QUERY × 2 + CACHE_SET × N + MQ_PRODUCE + HTTP_OUT
+GET {{host}}/users/chain
+
+###
+
+### 12. Bulk insert (10 records)  →  DB_QUERY × 10 연속 span
+POST {{host}}/users/bulk?count=10
+
+###
+
+### 13. Bulk insert (50 records)  →  더 많은 DB span 확인
+POST {{host}}/users/bulk?count=50
+
+###
+
+### 14. Error simulation: 500  →  HTTP_IN ERR (응답은 정상 전달됨)
+GET {{host}}/users/error?code=500
+
+###
+
+### 15. Error simulation: 404  →  HTTP_IN ERR
+GET {{host}}/users/error?code=404
+
+### 16. Error
+GET {{host}}/error

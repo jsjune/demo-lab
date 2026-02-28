@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html(content=~{::section})}">
+<body>
+<section>
+    <div class="card">
+        <h2>Alert Rules</h2>
+        <p style="color: var(--secondary-color); font-size: 0.875rem; margin-bottom: 1.5rem;">
+            Configure threshold-based alerting rules for slow queries, error rates, and more.
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Rule Name</th>
+                    <th>Category</th>
+                    <th>Threshold Type</th>
+                    <th>Value</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr th:each="rule : ${rules}">
+                    <td th:text="${rule.id}"></td>
+                    <td th:text="${rule.name}" style="font-weight: 600;"></td>
+                    <td th:text="${rule.category}"></td>
+                    <td th:text="${rule.thresholdType}"></td>
+                    <td th:text="${rule.thresholdValue}"></td>
+                    <td>
+                        <span th:class="${rule.enabled} ? 'badge badge-success' : 'badge badge-secondary'"
+                              th:text="${rule.enabled} ? 'ENABLED' : 'DISABLED'"></span>
+                    </td>
+                    <td>
+                        <form th:action="@{/alerts/delete/{id}(id=${rule.id})}" method="post" style="display:inline;">
+                            <button type="submit" style="background-color: var(--error-color); padding: 0.25rem 0.5rem; font-size: 0.75rem;">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                <tr th:if="${#lists.isEmpty(rules)}">
+                    <td colspan="7" style="text-align: center;">No alert rules configured.</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <h3>Add New Rule</h3>
+        <form th:action="@{/alerts/save}" method="post" class="search-form" style="flex-wrap: wrap;">
+            <div class="form-group">
+                <label>Rule Name</label>
+                <input type="text" name="name" required placeholder="e.g. Slow DB Query">
+            </div>
+            <div class="form-group">
+                <label>Category</label>
+                <select name="category" style="padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 0.25rem;">
+                    <option value="DB">DB</option>
+                    <option value="HTTP">HTTP</option>
+                    <option value="MQ">MQ</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Threshold Type</label>
+                <select name="thresholdType" style="padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 0.25rem;">
+                    <option value="DURATION_MS">Duration (ms)</option>
+                    <option value="ERROR_RATE">Error Rate (%)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Value</label>
+                <input type="number" step="0.1" name="thresholdValue" required placeholder="500">
+            </div>
+            <input type="hidden" name="enabled" value="true">
+            <button type="submit" style="height: 38px;">Add Rule</button>
+        </form>
+    </div>
+</section>
+</body>
+</html>

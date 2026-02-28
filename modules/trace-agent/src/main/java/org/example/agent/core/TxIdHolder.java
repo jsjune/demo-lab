@@ -1,0 +1,9 @@
+package org.example.agent.core;
+
+public class TxIdHolder {
+    private static final InheritableThreadLocal<String> holder = new InheritableThreadLocal<>();
+
+    public static void set(String txId) { holder.set(txId); }
+    public static String get() { return holder.get(); }
+    public static void clear() { holder.remove(); }
+}

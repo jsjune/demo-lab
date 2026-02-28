@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" th:replace="~{layout :: html(content=~{::section})}">
+<body>
+<section>
+
+    <!-- ── Header card ─────────────────────────────── -->
+    <div class="card" style="padding-bottom:1rem;">
+        <a th:href="@{/}" style="font-size:0.875rem; text-decoration:none; color:var(--primary-color);">← Back to List</a>
+        <h2 style="margin-top:0.75rem;">Transaction: <code th:text="${txId}"></code></h2>
+    </div>
+
+    <!-- ── Summary stats ────────────────────────────── -->
+    <div class="card" th:if="${not #lists.isEmpty(events)}">
+        <div class="stats-grid">
+            <div class="stat-item">
+                <div class="stat-value" th:text="${#lists.size(events)}">0</div>
+                <div class="stat-label">Total Spans</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value"
+                     th:text="${events[events.size()-1].timestamp - events[0].timestamp} + 'ms'">-</div>
+                <div class="stat-label">Duration</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="statServers">-</div>
+                <div class="stat-label">Servers</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="statErr">0</div>
+                <div class="stat-label">Errors</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Error Summary Card ──────────────────────── -->
+    <div class="error-summary-card" id="errorSummary" style="display:none;">
+        <div class="error-summary-header">
+            <span style="font-size:1.2rem;">⚠️</span>
+            <span>Error Summary</span>
+        </div>
+        <div id="errorList">
+            <!-- Populated by JS -->
+        </div>
+    </div>
+
+    <!-- ── Gantt chart ──────────────────────────────── -->
+    <div class="card">
+        <h3>Timeline (Gantt Chart)</h3>
+        <div class="gantt-chart" th:if="${not #lists.isEmpty(events)}">
+            <div th:with="minTime=${events[0].timestamp},
+                          totalDuration=${events[events.size()-1].timestamp - events[0].timestamp > 0
+                                          ? events[events.size()-1].timestamp - events[0].timestamp
+                                          : 100}">
+
+                <!-- Time ruler -->
+                <div class="gantt-ruler">
+                    <div class="gantt-ruler-label">0ms</div>
+                    <div class="gantt-ruler-label" th:text="${totalDuration / 2} + 'ms'"></div>
+                    <div class="gantt-ruler-label" th:text="${totalDuration} + 'ms'"></div>
+                </div>
+
+                <!-- One row per event -->
+                <div th:each="event : ${events}" class="gantt-row"
+                     th:with="catColor=${event.category.name() == 'HTTP' ? '#2563eb'
+                                       : (event.category.name() == 'DB'    ? '#059669'
+                                       : (event.category.name() == 'CACHE' ? '#d97706'
+                                       : (event.category.name() == 'MQ'    ? '#7c3aed' : '#64748b')))}">
+                    <div class="gantt-label">
+                        <div class="gantt-label-server" th:text="${event.serverName}"></div>
+                        <div class="gantt-label-type"   th:text="${event.type}"></div>
+                    </div>
+                    <div class="gantt-bar-container">
+                        <!-- Duration bar (END events) -->
+                        <div th:if="${event.durationMs != null}"
+                             th:class="${event.success} ? 'gantt-bar bar-ok' : 'gantt-bar bar-err'"
+                             th:style="${'left:' + (event.timestamp - event.durationMs - minTime) * 100.0 / totalDuration
+                                        + '%;width:' + (event.durationMs * 100.0 / totalDuration)
+                                        + '%;' + (event.success ? 'background-color:' + catColor + ';' : '')}"
+                             th:title="${event.target + ' (' + event.durationMs + 'ms)'}">
+                        </div>
+                        <!-- Marker (START events — no duration) -->
+                        <div th:if="${event.durationMs == null}"
+                             class="gantt-marker"
+                             th:style="${'left:' + (event.timestamp - minTime) * 100.0 / totalDuration + '%'}"
+                             th:title="${event.type + ': ' + event.target}">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <p th:if="${#lists.isEmpty(events)}" style="color:var(--secondary-color);">
+            No events found for this transaction.
+        </p>
+    </div>
+
+    <!-- ── Event list ────────────────────────────────── -->
+    <div class="card">
+        <h3>Event List</h3>
+        <table id="eventTable">
+            <thead>
+                <tr>
+                    <th>Offset</th>
+                    <th>Server</th>
+                    <th>Category</th>
+                    <th>Type</th>
+                    <th>Target</th>
+                    <th>Duration</th>
+                    <th>Status</th>
+                    <th style="width:36px;"></th>
+                </tr>
+            </thead>
+            <tbody>
+                <th:block th:each="event,stat : ${events}">
+                    <!-- Main event row -->
+                    <tr th:classappend="${event.success} ? '' : ' row-err'"
+                        th:attr="data-success=${event.success}, data-server=${event.serverName}">
+                        <td style="font-family:monospace; font-size:0.82rem;"
+                            th:text="${event.timestamp - events[0].timestamp} + 'ms'"></td>
+                        <td th:text="${event.serverName}"></td>
+                        <td>
+                            <span class="cat-badge"
+                                  th:classappend="'cat-' + ${event.category}"
+                                  th:text="${event.category}"></span>
+                        </td>
+                        <td th:text="${event.type}"></td>
+                        <td class="target-cell">
+                            <div th:text="${event.target}" th:title="${event.target}"></div>
+                            <span th:if="${not event.success and event.extraInfo.containsKey('errorMessage')}"
+                                  class="inline-error"
+                                  th:text="${event.extraInfo.get('errorMessage')}"></span>
+                        </td>
+                        <td style="font-family:monospace; font-size:0.82rem;"
+                            th:text="${event.durationMs != null ? event.durationMs + 'ms' : '-'}"></td>
+                        <td>
+                            <span th:class="${event.success} ? 'badge badge-success' : 'badge badge-error'"
+                                  th:text="${event.success} ? 'OK' : 'ERR'"></span>
+                        </td>
+                        <td style="text-align:center;">
+                            <button th:if="${event.extraInfo != null and not event.extraInfo.isEmpty()}"
+                                    class="btn-extra"
+                                    th:attr="data-idx=${stat.index}">+</button>
+                        </td>
+                    </tr>
+                    <!-- Expandable extra info row -->
+                    <tr th:if="${event.extraInfo != null and not event.extraInfo.isEmpty()}"
+                        class="extra-row"
+                        th:id="'extra-' + ${stat.index}"
+                        style="display:none;">
+                        <td colspan="8" class="extra-info-cell">
+                            <div class="extra-info-grid">
+                                <div class="extra-info-item"
+                                     th:each="entry : ${event.extraInfo.entrySet()}">
+                                    <span class="extra-key" th:text="${entry.key}"></span>
+                                    <span class="extra-val" th:text="${entry.value}"></span>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                </th:block>
+            </tbody>
+        </table>
+    </div>
+
+    <script th:inline="javascript">
+        // ── Summary stats (computed from DOM) ─────────────────────────────────
+        document.addEventListener('DOMContentLoaded', function () {
+            const rows    = document.querySelectorAll('#eventTable tbody tr[data-server]');
+            let errs      = 0;
+            const servers = new Set();
+            const errorItems = [];
+
+            /*[# th:each="event : ${events}"]*/
+            if (!/*[[${event.success}]]*/) {
+                errorItems.push({
+                    server: /*[[${event.serverName}]]*/,
+                    type: /*[[${event.type}]]*/,
+                    msg: /*[[${event.extraInfo.get('errorMessage') != null ? event.extraInfo.get('errorMessage') : 'Unknown error'}]]*/,
+                    errorType: /*[[${event.extraInfo.get('errorType') != null ? event.extraInfo.get('errorType') : 'Error'}]]*/
+                });
+            }
+            /*[/]*/
+
+            rows.forEach(r => {
+                if (r.dataset.success === 'false') errs++;
+                if (r.dataset.server)  servers.add(r.dataset.server);
+            });
+
+            const elServers = document.getElementById('statServers');
+            const elErr     = document.getElementById('statErr');
+            if (elServers) elServers.textContent = servers.size;
+            if (elErr) {
+                elErr.textContent = errs;
+                if (errs > 0) elErr.classList.add('err');
+            }
+
+            // Populate Error Summary Card
+            if (errorItems.length > 0) {
+                const summaryCard = document.getElementById('errorSummary');
+                const errorList = document.getElementById('errorList');
+                summaryCard.style.display = 'block';
+                
+                errorItems.forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = 'error-item';
+                    div.innerHTML = `
+                        <div class="error-item-meta">[${item.server}] ${item.type} - ${item.errorType}</div>
+                        <div class="error-item-msg">${item.msg}</div>
+                    `;
+                    errorList.appendChild(div);
+                });
+            }
+        });
+
+        // ── Expand / collapse extra info rows ─────────────────────────────────
+        document.addEventListener('click', function (e) {
+            if (!e.target.classList.contains('btn-extra')) return;
+            const idx = e.target.dataset.idx;
+            const row = document.getElementById('extra-' + idx);
+            if (!row) return;
+            const hidden = row.style.display === 'none' || row.style.display === '';
+            row.style.display  = hidden ? 'table-row' : 'none';
+            e.target.textContent = hidden ? '−' : '+';
+        });
+    </script>
+</section>
+</body>
+</html>
