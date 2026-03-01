@@ -410,6 +410,23 @@ public class TraceRuntime {
     }
 
     /**
+     * Lettuce RedisFuture&lt;V&gt;에 HIT/MISS 판단 콜백을 등록한다.
+     * RedisFuture&lt;V&gt;는 java.util.concurrent.CompletionStage&lt;V&gt;를 구현하므로
+     * Lettuce 직접 의존 없이 표준 JDK API로 콜백 등록 가능.
+     *
+     * <p>Bytecode ABI: (Ljava/lang/Object;Ljava/lang/String;)V
+     */
+    public static void attachCacheGetListener(Object future, String key) {
+        safeRun(() -> {
+            ((java.util.concurrent.CompletionStage<?>) future).whenComplete((v, t) -> {
+                if (t == null) {
+                    onCacheGet(key, v != null); // v=null → MISS, v≠null → HIT
+                }
+            });
+        });
+    }
+
+    /**
      * Allows plugins to publish custom events without coupling to TraceRuntime internals.
      */
     public static void emitCustomEvent(TraceEventType type, TraceCategory category,

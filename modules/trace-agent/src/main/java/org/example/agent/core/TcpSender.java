@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class TcpSender {
     private static final long BACKOFF_MAX_MS = 30_000;
 
-    private static final BlockingQueue<TraceEvent> queue = new LinkedBlockingQueue<>(AgentConfig.getBufferCapacity());
+    private static volatile BlockingQueue<TraceEvent> queue;
     private static final ObjectMapper mapper = new ObjectMapper();
     private static final AtomicLong dropCounter = new AtomicLong(0);
     private static volatile boolean initialized = false;
@@ -23,6 +23,8 @@ public class TcpSender {
 
     public static synchronized void init() {
         if (initialized) return;
+
+        queue = new LinkedBlockingQueue<>(AgentConfig.getBufferCapacity());
 
         Thread daemon = new Thread(() -> {
             Socket socket = null;
@@ -77,16 +79,18 @@ public class TcpSender {
     }
 
     public static void send(TraceEvent event) {
+        BlockingQueue<TraceEvent> q = queue; // volatile read를 로컬 변수로 캡처
+        if (q == null) return;              // init() 이전 극단적 호출 시 조용히 드롭
         // Drop oldest event to make room, then enqueue the new one
-        if (!queue.offer(event)) {
-            TraceEvent dropped = queue.poll();
+        if (!q.offer(event)) {
+            TraceEvent dropped = q.poll();
             if (dropped != null) {
                 long count = dropCounter.incrementAndGet();
                 if (count % 100 == 1) {
                     AgentLogger.warn("Buffer full. Dropped oldest event. Total drops: " + count);
                 }
             }
-            queue.offer(event);
+            q.offer(event);
         }
     }
 }
