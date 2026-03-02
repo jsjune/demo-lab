@@ -1,6 +1,7 @@
 package org.example.agent.plugin.jdbc;
 
 import org.example.agent.TracerPlugin;
+import org.example.agent.config.AgentConfig;
 import org.example.agent.plugin.BaseAdvice;
 import org.example.agent.plugin.ReflectionUtils;
 import org.objectweb.asm.*;
@@ -28,14 +29,15 @@ public class JdbcPlugin implements TracerPlugin {
         //   H2: org/h2/jdbc/JdbcPreparedStatement
         //   SQL Server: com/microsoft/sqlserver/jdbc/SQLServerPreparedStatement
         //   Oracle: oracle/jdbc/OraclePreparedStatement
-        return Arrays.asList(
+        return AgentConfig.getPluginTargetPrefixes(pluginId(), Arrays.asList(
             "com/mysql/jdbc/",
             "com/mysql/cj/jdbc/",
+            "org/mariadb/jdbc/",
             "org/postgresql/jdbc/",
             "org/h2/jdbc/",
             "com/microsoft/sqlserver/jdbc/",
             "oracle/jdbc/"
-        );
+        ));
     }
 
     @Override
@@ -46,8 +48,8 @@ public class JdbcPlugin implements TracerPlugin {
     static class JdbcStatementTransformer implements ClassFileTransformer {
         @Override
         public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classfileBuffer) {
-            String normalizedName = className.replace('.', '/');
-            if (!normalizedName.endsWith("PreparedStatement")) return null;
+            String normalizedName = className == null ? "" : className.replace('.', '/');
+            if (!normalizedName.contains("PreparedStatement") && !normalizedName.contains("CallableStatement")) return null;
             try {
                 ClassReader reader = new ClassReader(classfileBuffer);
                 ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);

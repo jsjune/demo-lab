@@ -21,12 +21,12 @@ public class KafkaPlugin implements TracerPlugin {
 
     @Override
     public List<String> targetClassPrefixes() {
-        return Arrays.asList(
-                "org/apache/kafka/clients/producer/KafkaProducer",
-                "org/apache/kafka/clients/consumer/KafkaConsumer",
+        return AgentConfig.getPluginTargetPrefixes(pluginId(), Arrays.asList(
+                "org/apache/kafka/clients/producer/",
+                "org/apache/kafka/clients/consumer/",
                 "org/springframework/kafka/core/KafkaTemplate",
                 "org/springframework/kafka/listener/"
-        );
+        ));
     }
 
     @Override
@@ -40,7 +40,11 @@ public class KafkaPlugin implements TracerPlugin {
     static class KafkaAdapterTransformer implements ClassFileTransformer {
         @Override
         public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classfileBuffer) {
-            if (!className.replace('.', '/').contains("MessagingMessageListenerAdapter")) return null;
+            String normalized = className == null ? "" : className.replace('.', '/');
+            if (!normalized.startsWith("org/springframework/kafka/listener/")
+                && !normalized.contains("MessagingMessageListenerAdapter")) {
+                return null;
+            }
             try {
                 ClassReader reader = new ClassReader(classfileBuffer);
                 // Same getCommonSuperClass() safety as KafkaProducerTransformer.
@@ -125,7 +129,8 @@ public class KafkaPlugin implements TracerPlugin {
     static class KafkaProducerTransformer implements ClassFileTransformer {
         @Override
         public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classfileBuffer) {
-            if (!"org/apache/kafka/clients/producer/KafkaProducer".equals(className.replace('.', '/'))) return null;
+            String normalized = className == null ? "" : className.replace('.', '/');
+            if (!normalized.startsWith("org/apache/kafka/clients/producer/")) return null;
             try {
                 ClassReader reader = new ClassReader(classfileBuffer);
                 // COMPUTE_FRAMES triggers ClassWriter.getCommonSuperClass() → Class.forName() for every

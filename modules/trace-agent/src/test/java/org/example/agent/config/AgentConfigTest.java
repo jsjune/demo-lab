@@ -3,6 +3,9 @@ package org.example.agent.config;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 @DisplayName("설정: AgentConfig (에이전트 설정 로드)")
@@ -29,5 +32,19 @@ class AgentConfigTest {
         assertTrue(AgentConfig.isPluginEnabled("http"));
         assertTrue(AgentConfig.isPluginEnabled("jdbc"));
         assertFalse(AgentConfig.isPluginEnabled("file-io"));
+    }
+
+    @Test
+    @DisplayName("플러그인 target-prefixes override/add 설정이 반영되어야 한다")
+    void testPluginTargetPrefixesConfig() {
+        System.setProperty("trace.agent.plugin.test-ext.target-prefixes", "a.b.C, x/y/");
+        System.setProperty("trace.agent.plugin.test-ext.target-prefixes.add", "x.y/,z.k");
+        AgentConfig.init();
+
+        List<String> prefixes = AgentConfig.getPluginTargetPrefixes(
+            "test-ext",
+            Arrays.asList("default/one", "default/two"));
+
+        assertEquals(Arrays.asList("a/b/C", "x/y/", "z/k"), prefixes);
     }
 }

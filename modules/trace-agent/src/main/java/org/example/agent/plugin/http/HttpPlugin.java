@@ -15,17 +15,18 @@ import java.util.Arrays;
 import java.util.List;
 
 public class HttpPlugin implements TracerPlugin {
+    private static final List<String> DEFAULT_TARGET_PREFIXES = Arrays.asList(
+        "org/springframework/web/servlet/",
+        "org/springframework/web/client/",
+        "org/springframework/http/client/support/",
+        "org/springframework/web/reactive/function/client/"
+    );
 
     @Override public String pluginId() { return "http"; }
 
     @Override
     public List<String> targetClassPrefixes() {
-        return Arrays.asList(
-            AgentConfig.getHttpDispatcherClass(),
-            AgentConfig.getHttpRestTemplateClass(),
-            AgentConfig.getHttpAccessorClass(),
-            AgentConfig.getHttpWebClientClassPrefix()
-        );
+        return AgentConfig.getPluginTargetPrefixes(pluginId(), DEFAULT_TARGET_PREFIXES);
     }
 
     @Override
@@ -69,7 +70,11 @@ public class HttpPlugin implements TracerPlugin {
     static class DispatcherServletTransformer implements ClassFileTransformer {
         @Override
         public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classfileBuffer) {
-            if (!AgentConfig.getHttpDispatcherClass().equals(className.replace('.', '/'))) return null;
+            String normalized = className == null ? "" : className.replace('.', '/');
+            if (!AgentConfig.getHttpDispatcherClass().equals(normalized)
+                && !(normalized.startsWith("org/springframework/web/servlet/") && normalized.endsWith("/DispatcherServlet"))) {
+                return null;
+            }
             try {
                 ClassReader reader = new ClassReader(classfileBuffer);
                 // COMPUTE_FRAMES is required here: the DispatcherServletAdvice injects
@@ -207,11 +212,15 @@ public class HttpPlugin implements TracerPlugin {
     static class RestTemplateTransformer implements ClassFileTransformer {
         @Override
         public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classfileBuffer) {
-            String normalized = className.replace('.', '/');
+            String normalized = className == null ? "" : className.replace('.', '/');
             // Also match HttpAccessor — createRequest() is defined there, not in RestTemplate itself.
             if (!AgentConfig.getHttpRestTemplateClass().equals(normalized)
                     && !normalized.contains("DummyRestTemplate")
-                    && !AgentConfig.getHttpAccessorClass().equals(normalized)) return null;
+                    && !AgentConfig.getHttpAccessorClass().equals(normalized)
+                    && !(normalized.startsWith("org/springframework/web/client/") && normalized.endsWith("/RestTemplate"))
+                    && !(normalized.startsWith("org/springframework/http/client/support/") && normalized.endsWith("/HttpAccessor"))) {
+                return null;
+            }
             try {
                 ClassReader reader = new ClassReader(classfileBuffer);
                 ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
@@ -315,8 +324,11 @@ public class HttpPlugin implements TracerPlugin {
         @Override
         public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classfileBuffer) {
             // Prefix match — tolerates inner-class renames across Spring versions
-            String normalized = className.replace('.', '/');
-            if (!normalized.startsWith(AgentConfig.getHttpWebClientClassPrefix())) return null;
+            String normalized = className == null ? "" : className.replace('.', '/');
+            if (!normalized.startsWith(AgentConfig.getHttpWebClientClassPrefix())
+                && !normalized.startsWith("org/springframework/web/reactive/function/client/ExchangeFunctions")) {
+                return null;
+            }
             try {
                 ClassReader reader = new ClassReader(classfileBuffer);
                 ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);

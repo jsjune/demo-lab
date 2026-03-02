@@ -43,10 +43,9 @@ public class FileIoPlugin implements TracerPlugin {
 
     @Override
     public List<String> targetClassPrefixes() {
-        return Arrays.asList(
-            "java/io/FileInputStream",
-            "java/io/FileOutputStream"
-        );
+        return AgentConfig.getPluginTargetPrefixes(pluginId(), Arrays.asList(
+            "java/io/"
+        ));
     }
 
     @Override
@@ -65,7 +64,8 @@ public class FileIoPlugin implements TracerPlugin {
         @Override
         public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined,
                                 ProtectionDomain protectionDomain, byte[] classfileBuffer) {
-            if (!"java/io/FileInputStream".equals(className)) return null;
+            String normalized = className == null ? "" : className.replace('.', '/');
+            if (!isReadCandidate(normalized)) return null;
             try {
                 ClassReader reader = new ClassReader(classfileBuffer);
                 ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
@@ -83,6 +83,11 @@ public class FileIoPlugin implements TracerPlugin {
                 }, ClassReader.EXPAND_FRAMES);
                 return writer.toByteArray();
             } catch (Exception e) { return null; }
+        }
+
+        private boolean isReadCandidate(String className) {
+            return className.startsWith("java/io/")
+                && (className.endsWith("FileInputStream") || className.endsWith("RandomAccessFile"));
         }
     }
 
@@ -126,7 +131,8 @@ public class FileIoPlugin implements TracerPlugin {
         @Override
         public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined,
                                 ProtectionDomain protectionDomain, byte[] classfileBuffer) {
-            if (!"java/io/FileOutputStream".equals(className)) return null;
+            String normalized = className == null ? "" : className.replace('.', '/');
+            if (!isWriteCandidate(normalized)) return null;
             try {
                 ClassReader reader = new ClassReader(classfileBuffer);
                 ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
@@ -144,6 +150,11 @@ public class FileIoPlugin implements TracerPlugin {
                 }, ClassReader.EXPAND_FRAMES);
                 return writer.toByteArray();
             } catch (Exception e) { return null; }
+        }
+
+        private boolean isWriteCandidate(String className) {
+            return className.startsWith("java/io/")
+                && (className.endsWith("FileOutputStream") || className.endsWith("RandomAccessFile"));
         }
     }
 

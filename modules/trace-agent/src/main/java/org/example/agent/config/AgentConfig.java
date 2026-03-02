@@ -2,6 +2,9 @@ package org.example.agent.config;
 
 import java.io.FileInputStream;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 
@@ -166,6 +169,35 @@ public class AgentConfig {
         return Boolean.parseBoolean(get("plugin." + pluginId + ".enabled", "true"));
     }
 
+    /**
+     * Builds the effective target class prefixes for a plugin.
+     *
+     * <p>Properties:
+     * <ul>
+     *   <li>{@code plugin.<id>.target-prefixes}: full override (comma-separated)</li>
+     *   <li>{@code plugin.<id>.target-prefixes.add}: append-only extras (comma-separated)</li>
+     * </ul>
+     *
+     * <p>Each prefix is normalized to internal JVM name form (slash-separated).
+     */
+    public static List<String> getPluginTargetPrefixes(String pluginId, List<String> defaults) {
+        String baseKey = "plugin." + pluginId + ".target-prefixes";
+        String override = get(baseKey, "");
+        String append = get(baseKey + ".add", "");
+
+        LinkedHashSet<String> resolved = new LinkedHashSet<>();
+        if (!override.trim().isEmpty()) {
+            resolved.addAll(parsePrefixes(override));
+        } else if (defaults != null) {
+            for (String d : defaults) {
+                String normalized = normalizePrefix(d);
+                if (!normalized.isEmpty()) resolved.add(normalized);
+            }
+        }
+        resolved.addAll(parsePrefixes(append));
+        return new ArrayList<>(resolved);
+    }
+
     public static int  getBufferCapacity() { return getInt("buffer.capacity", 1000); }
     public static long getSlowQueryMs()  { return getLong("slow-query-ms", 500); }
     public static long getMinSizeBytes() { return getLong("min-size-bytes", 1024); }
@@ -188,5 +220,24 @@ public class AgentConfig {
     public static long getLong(String key, long defaultValue) {
         String val = props.getProperty(key);
         try { return val != null ? Long.parseLong(val) : defaultValue; } catch (Exception e) { return defaultValue; }
+    }
+
+    private static List<String> parsePrefixes(String value) {
+        List<String> out = new ArrayList<>();
+        if (value == null || value.trim().isEmpty()) return out;
+        for (String raw : value.split(",")) {
+            String normalized = normalizePrefix(raw);
+            if (!normalized.isEmpty()) out.add(normalized);
+        }
+        return out;
+    }
+
+    private static String normalizePrefix(String raw) {
+        if (raw == null) return "";
+        String p = raw.trim();
+        if (p.isEmpty()) return "";
+        p = p.replace('.', '/');
+        while (p.startsWith("/")) p = p.substring(1);
+        return p;
     }
 }

@@ -20,10 +20,16 @@ import static org.junit.jupiter.api.Assertions.*;
 class TcpSenderTest {
 
     @BeforeEach
-    void setUp() {
+    @SuppressWarnings("unchecked")
+    void setUp() throws Exception {
         // queue는 init() 호출 시 생성되므로 테스트 전에 반드시 초기화
         AgentConfig.init();
         TcpSender.init();
+        stopSenderDaemon();
+
+        Field queueField = TcpSender.class.getDeclaredField("queue");
+        queueField.setAccessible(true);
+        queueField.set(null, new LinkedBlockingQueue<>(AgentConfig.getBufferCapacity()));
     }
 
     @AfterEach
@@ -34,6 +40,15 @@ class TcpSenderTest {
         queueField.setAccessible(true);
         BlockingQueue<TraceEvent> queue = (BlockingQueue<TraceEvent>) queueField.get(null);
         if (queue != null) queue.clear();
+    }
+
+    private void stopSenderDaemon() throws InterruptedException {
+        for (Thread thread : Thread.getAllStackTraces().keySet()) {
+            if ("trace-agent-sender".equals(thread.getName()) && thread.isAlive()) {
+                thread.interrupt();
+                thread.join(200);
+            }
+        }
     }
 
     @Test

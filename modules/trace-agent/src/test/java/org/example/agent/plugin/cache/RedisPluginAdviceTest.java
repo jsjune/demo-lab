@@ -115,6 +115,25 @@ class RedisPluginAdviceTest {
                 eq(false)
             );
         }
+
+        @Test
+        @DisplayName("eval 호출 시 lua 명령으로 onCacheSet이 주입되어야 한다")
+        void eval_injectsLuaOnCacheSet() {
+            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
+            RedisPlugin.LettuceAdvice advice = new RedisPlugin.LettuceAdvice(
+                mv, Opcodes.ACC_PUBLIC, "eval", "(Ljava/lang/String;)Lio/lettuce/core/RedisFuture;");
+
+            advice.onMethodEnter();
+
+            verify(mv).visitLdcInsn(eq("lua:eval"));
+            verify(mv).visitMethodInsn(
+                eq(Opcodes.INVOKESTATIC),
+                eq("org/example/agent/core/TraceRuntime"),
+                eq("onCacheSet"),
+                anyString(),
+                eq(false)
+            );
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -234,6 +253,25 @@ class RedisPluginAdviceTest {
                 eq(Opcodes.INVOKESTATIC),
                 eq("org/example/agent/core/TraceRuntime"),
                 eq("onCacheDel"),
+                anyString(),
+                eq(false)
+            );
+        }
+
+        @Test
+        @DisplayName("evalsha 호출 시 lua 명령으로 onCacheSet이 주입되어야 한다")
+        void evalsha_injectsLuaOnCacheSet() {
+            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
+            RedisPlugin.JedisAdvice advice = new RedisPlugin.JedisAdvice(
+                mv, Opcodes.ACC_PUBLIC, "evalsha", "(Ljava/lang/String;)Ljava/lang/Object;");
+
+            advice.onMethodEnter();
+
+            verify(mv).visitLdcInsn(eq("lua:evalsha"));
+            verify(mv).visitMethodInsn(
+                eq(Opcodes.INVOKESTATIC),
+                eq("org/example/agent/core/TraceRuntime"),
+                eq("onCacheSet"),
                 anyString(),
                 eq(false)
             );

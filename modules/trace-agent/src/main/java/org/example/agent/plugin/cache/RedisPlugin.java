@@ -1,6 +1,7 @@
 package org.example.agent.plugin.cache;
 
 import org.example.agent.TracerPlugin;
+import org.example.agent.config.AgentConfig;
 import org.example.agent.plugin.BaseAdvice;
 import org.objectweb.asm.*;
 import org.objectweb.asm.commons.*;
@@ -16,10 +17,10 @@ public class RedisPlugin implements TracerPlugin {
 
     @Override
     public List<String> targetClassPrefixes() {
-        return Arrays.asList(
-            "io/lettuce/core/AbstractRedisAsyncCommands",
-            "redis/clients/jedis/Jedis"
-        );
+        return AgentConfig.getPluginTargetPrefixes(pluginId(), Arrays.asList(
+            "io/lettuce/core/",
+            "redis/clients/jedis/"
+        ));
     }
 
     @Override
@@ -34,7 +35,8 @@ public class RedisPlugin implements TracerPlugin {
     static class LettuceTransformer implements ClassFileTransformer {
         @Override
         public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classfileBuffer) {
-            if (!"io/lettuce/core/AbstractRedisAsyncCommands".equals(className.replace('.', '/'))) return null;
+            String normalized = className == null ? "" : className.replace('.', '/');
+            if (!normalized.startsWith("io/lettuce/core/") || !normalized.contains("RedisAsyncCommands")) return null;
             try {
                 ClassReader reader = new ClassReader(classfileBuffer);
                 ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
@@ -42,7 +44,9 @@ public class RedisPlugin implements TracerPlugin {
                     @Override
                     public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
                         MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
-                        if (isTargetCommand(name)) return new LettuceAdvice(mv, access, name, descriptor);
+                        if (isTargetCommand(name) && descriptor.endsWith("Lio/lettuce/core/RedisFuture;")) {
+                            return new LettuceAdvice(mv, access, name, descriptor);
+                        }
                         return mv;
                     }
                 }, ClassReader.EXPAND_FRAMES);
@@ -51,7 +55,7 @@ public class RedisPlugin implements TracerPlugin {
         }
 
         private boolean isTargetCommand(String name) {
-            return Arrays.asList("get", "set", "del", "hget", "hset").contains(name);
+            return Arrays.asList("get", "set", "del", "hget", "hset", "eval", "evalsha").contains(name);
         }
     }
 
@@ -66,6 +70,11 @@ public class RedisPlugin implements TracerPlugin {
 
         @Override
         protected void onMethodEnter() {
+            if ("eval".equals(commandName) || "evalsha".equals(commandName)) {
+                mv.visitLdcInsn("lua:" + commandName);
+                mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onCacheSet", "(Ljava/lang/String;)V", false);
+                return;
+            }
             mv.visitVarInsn(ALOAD, 1);
             mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "safeKeyToString", "(Ljava/lang/Object;)Ljava/lang/String;", false);
 
@@ -102,7 +111,8 @@ public class RedisPlugin implements TracerPlugin {
     static class JedisTransformer implements ClassFileTransformer {
         @Override
         public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classfileBuffer) {
-            if (!"redis/clients/jedis/Jedis".equals(className.replace('.', '/'))) return null;
+            String normalized = className == null ? "" : className.replace('.', '/');
+            if (!normalized.startsWith("redis/clients/jedis/") || !normalized.contains("Jedis")) return null;
             try {
                 ClassReader reader = new ClassReader(classfileBuffer);
                 ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
@@ -121,7 +131,7 @@ public class RedisPlugin implements TracerPlugin {
         }
 
         private boolean isTargetCommand(String name) {
-            return Arrays.asList("get", "set", "del").contains(name);
+            return Arrays.asList("get", "set", "del", "eval", "evalsha").contains(name);
         }
     }
 
@@ -136,6 +146,11 @@ public class RedisPlugin implements TracerPlugin {
 
         @Override
         protected void onMethodEnter() {
+            if ("eval".equals(commandName) || "evalsha".equals(commandName)) {
+                mv.visitLdcInsn("lua:" + commandName);
+                mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onCacheSet", "(Ljava/lang/String;)V", false);
+                return;
+            }
             mv.visitVarInsn(ALOAD, 1);
             mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "safeKeyToString", "(Ljava/lang/Object;)Ljava/lang/String;", false);
 
