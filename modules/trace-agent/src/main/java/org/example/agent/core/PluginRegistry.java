@@ -35,15 +35,6 @@ public class PluginRegistry {
         return activePlugins.stream().anyMatch(TracerPlugin::requiresBootstrapSearch);
     }
 
-    /** Aggregate of all additional ignore packages contributed by active plugins. */
-    public static List<String> allAdditionalIgnorePackages() {
-        List<String> result = new ArrayList<>();
-        for (TracerPlugin p : activePlugins) {
-            result.addAll(p.additionalIgnorePackages());
-        }
-        return result;
-    }
-
     public static List<ClassFileTransformer> activeTransformers() {
         List<ClassFileTransformer> transformers = new ArrayList<>();
         for (TracerPlugin plugin : activePlugins) {

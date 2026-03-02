@@ -3,7 +3,6 @@ package org.example.agent;
 import org.example.agent.config.AgentConfig;
 
 import java.lang.instrument.ClassFileTransformer;
-import java.util.Collections;
 import java.util.List;
 
 public interface TracerPlugin {
@@ -21,7 +20,4 @@ public interface TracerPlugin {
 
     /** Return true if the agent jar must be appended to the Bootstrap ClassLoader. */
     default boolean requiresBootstrapSearch() { return false; }
-
-    /** Additional packages to exclude from the global instrumentation scan. */
-    default List<String> additionalIgnorePackages() { return Collections.emptyList(); }
 }

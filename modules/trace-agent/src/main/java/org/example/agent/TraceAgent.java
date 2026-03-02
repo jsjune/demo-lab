@@ -51,8 +51,7 @@ public class TraceAgent {
 
             TcpSender.init();
 
-            CompositeTransformer composite =
-                new CompositeTransformer(PluginRegistry.allAdditionalIgnorePackages());
+            CompositeTransformer composite = new CompositeTransformer();
             for (ClassFileTransformer transformer : PluginRegistry.activeTransformers()) {
                 composite.addTransformer(transformer);
             }
