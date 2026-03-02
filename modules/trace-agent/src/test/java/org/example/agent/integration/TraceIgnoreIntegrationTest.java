@@ -11,57 +11,73 @@ import java.lang.reflect.Method;
 
 import static org.mockito.Mockito.*;
 
-@DisplayName("통합: @TraceIgnore 지원 검증")
+@DisplayName("통합: @TraceIgnore 지원 및 KafkaAdapterTransformer 필터 검증")
 class TraceIgnoreIntegrationTest extends ByteBuddyIntegrationTest {
 
     @Test
-    @DisplayName("@TraceIgnore 어노테이션이 붙은 메서드는 Kafka 인스트루멘테이션을 건너뛰어야 한다")
-    void testTraceIgnoreOnKafkaListener() throws Exception {
+    @DisplayName("onMessage(String) 시그니처는 KafkaAdapterTransformer 대상이 아니므로 인스트루멘테이션이 적용되지 않아야 한다")
+    void testNonConsumerRecordMethod_notInstrumented() throws Exception {
         KafkaPlugin plugin = new KafkaPlugin();
-        // The transformer for listeners
-        var transformer = plugin.transformers().get(1);
+        // transformers(): [0] KafkaProducerTransformer, [1] KafkaAdapterTransformer
+        var adapterTransformer = plugin.transformers().get(1);
 
-        Class<?> transformedClass = transformAndLoad(IgnoredKafkaListener.class, transformer);
+        // onMessage(String) 시그니처 — ConsumerRecord 필터를 통과하지 못해 인스트루멘테이션 미적용
+        Class<?> transformedClass = transformAndLoad(NormalKafkaListener.class, adapterTransformer);
         Object instance = transformedClass.getDeclaredConstructor().newInstance();
         Method method = transformedClass.getDeclaredMethod("onMessage", String.class);
 
         try (MockedStatic<TraceRuntime> runtimeMock = mockStatic(TraceRuntime.class)) {
             method.invoke(instance, "test-payload");
 
-            // Verify that onMqConsumeStart was NOT called
-            runtimeMock.verify(() -> TraceRuntime.onMqConsumeStart(anyString(), anyString(), anyString()), never());
+            runtimeMock.verify(() -> TraceRuntime.onMqConsumeStart(any(), any(), any()), never());
         }
     }
 
     @Test
-    @DisplayName("@TraceIgnore 어노테이션이 없는 메서드는 정상적으로 인스트루멘테이션되어야 한다")
-    void testNormalKafkaListener() throws Exception {
+    @DisplayName("MessagingMessageListenerAdapter.onMessage(ConsumerRecord, ...) 호출 시 인스트루멘테이션이 적용되어야 한다")
+    void testAdapterOnMessage_isInstrumented() throws Exception {
         KafkaPlugin plugin = new KafkaPlugin();
-        var transformer = plugin.transformers().get(1);
+        var adapterTransformer = plugin.transformers().get(1);
 
-        Class<?> transformedClass = transformAndLoad(NormalKafkaListener.class, transformer);
-        Object instance = transformedClass.getDeclaredConstructor().newInstance();
-        Method method = transformedClass.getDeclaredMethod("onMessage", String.class);
+        // 클래스 이름에 "MessagingMessageListenerAdapter" 포함 + ConsumerRecord 시그니처 — 필터 통과
+        Class<?> transformedAdapter = transformAndLoad(DummyMessagingMessageListenerAdapter.class, adapterTransformer);
+        Object instance = transformedAdapter.getDeclaredConstructor().newInstance();
+        Method onMessage = transformedAdapter.getDeclaredMethod("onMessage",
+                org.apache.kafka.clients.consumer.ConsumerRecord.class, Object.class, Object.class);
 
         try (MockedStatic<TraceRuntime> runtimeMock = mockStatic(TraceRuntime.class)) {
-            method.invoke(instance, "test-payload");
+            try (MockedStatic<KafkaPlugin> pluginMock = mockStatic(KafkaPlugin.class, withSettings().defaultAnswer(CALLS_REAL_METHODS))) {
+                pluginMock.when(() -> KafkaPlugin.extractTxId(any())).thenReturn(null);
+                pluginMock.when(() -> KafkaPlugin.extractTopic(any())).thenReturn("test-topic");
 
-            // Verify that onMqConsumeStart WAS called
-            runtimeMock.verify(() -> TraceRuntime.onMqConsumeStart(any(), any(), any()), atLeastOnce());
+                onMessage.invoke(instance, null, null, null);
+
+                // txId는 extractTxId(null) → null → TxIdHolder 미설정 → TxIdHolder.get() == null
+                // any()로 null 포함 매칭
+                runtimeMock.verify(() -> TraceRuntime.onMqConsumeStart(any(), any(), any()), atLeastOnce());
+            }
         }
     }
 
+    // Adapter 클래스: 클래스명에 "MessagingMessageListenerAdapter" 포함 필수
+    public static class DummyMessagingMessageListenerAdapter {
+        public void onMessage(org.apache.kafka.clients.consumer.ConsumerRecord<?, ?> record, Object ack, Object consumer) {
+        }
+    }
+
+    // onMessage(String) 시그니처 — ConsumerRecord 아니므로 KafkaAdapterTransformer 대상 아님
     public static class NormalKafkaListener {
         @org.springframework.kafka.annotation.KafkaListener(topics = "test")
         public void onMessage(String data) {
         }
     }
 
+    // @TraceIgnore 어노테이션이 붙은 리스너 (참고용 — kafka-plugin-refactor 후 어댑터 레벨에서 추적하므로
+    // @KafkaListener 메서드 레벨 @TraceIgnore는 더 이상 직접 지원되지 않음)
     public static class IgnoredKafkaListener {
         @TraceIgnore
         @org.springframework.kafka.annotation.KafkaListener(topics = "test")
         public void onMessage(String data) {
-            // Business logic
         }
     }
 }

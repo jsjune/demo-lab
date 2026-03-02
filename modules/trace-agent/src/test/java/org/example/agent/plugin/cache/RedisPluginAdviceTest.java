@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 import org.mockito.Mockito;
+import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
@@ -19,38 +20,54 @@ import static org.mockito.Mockito.*;
 class RedisPluginAdviceTest {
 
     // -----------------------------------------------------------------------
-    // LettuceAdvice (FR-06)
+    // LettuceAdvice
     // -----------------------------------------------------------------------
 
     @Nested
-    @DisplayName("LettuceAdvice — safeKeyToString 사용 검증 (FR-06)")
+    @DisplayName("LettuceAdvice — safeKeyToString 사용 검증")
     class LettuceAdviceTest {
 
         @Test
-        @DisplayName("get 호출 시 safeKeyToString → onCacheGet 순서로 바이트코드가 주입되어야 한다")
-        void get_injectsSafeKeyToString_thenOnCacheGet() {
+        @DisplayName("get onMethodEnter: 키를 safeKeyToString으로 캡처하고 onCacheGet은 호출하지 않아야 한다")
+        void get_onEnter_capturesKey_notCallsOnCacheGet() {
             MethodVisitor mv = Mockito.mock(MethodVisitor.class);
             RedisPlugin.LettuceAdvice advice = new RedisPlugin.LettuceAdvice(
                 mv, Opcodes.ACC_PUBLIC, "get", "(Ljava/lang/Object;)Lio/lettuce/core/RedisFuture;");
 
             advice.onMethodEnter();
 
-            InOrder order = inOrder(mv);
-            // 1) ALOAD 1
-            order.verify(mv).visitVarInsn(eq(Opcodes.ALOAD), eq(1));
-            // 2) safeKeyToString (String.valueOf 대신)
-            order.verify(mv).visitMethodInsn(
+            // safeKeyToString은 키 캡처를 위해 반드시 호출되어야 한다
+            verify(mv).visitMethodInsn(
                 eq(Opcodes.INVOKESTATIC),
                 eq("org/example/agent/core/TraceRuntime"),
                 eq("safeKeyToString"),
                 eq("(Ljava/lang/Object;)Ljava/lang/String;"),
                 eq(false)
             );
-            // 3) onCacheGet
-            order.verify(mv).visitMethodInsn(
+            // onCacheGet은 onMethodExit에서 attachCacheGetListener를 통해 비동기로 판단 — Enter에서는 미호출
+            verify(mv, never()).visitMethodInsn(
                 eq(Opcodes.INVOKESTATIC),
                 eq("org/example/agent/core/TraceRuntime"),
                 eq("onCacheGet"),
+                anyString(),
+                anyBoolean()
+            );
+        }
+
+        @Test
+        @DisplayName("get onMethodExit: attachCacheGetListener가 호출되어야 한다 (비동기 HIT/MISS 위임)")
+        void get_onExit_callsAttachCacheGetListener() {
+            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
+            RedisPlugin.LettuceAdvice advice = new RedisPlugin.LettuceAdvice(
+                mv, Opcodes.ACC_PUBLIC, "get", "(Ljava/lang/Object;)Lio/lettuce/core/RedisFuture;");
+
+            advice.onMethodEnter(); // keyLocalIdx 세팅
+            advice.onMethodExit(Opcodes.ARETURN);
+
+            verify(mv, atLeastOnce()).visitMethodInsn(
+                eq(Opcodes.INVOKESTATIC),
+                eq("org/example/agent/core/TraceRuntime"),
+                eq("attachCacheGetListener"),
                 anyString(),
                 eq(false)
             );
@@ -101,11 +118,11 @@ class RedisPluginAdviceTest {
     }
 
     // -----------------------------------------------------------------------
-    // JedisTransformer descriptor 필터 (FR-07)
+    // JedisTransformer descriptor 필터
     // -----------------------------------------------------------------------
 
     @Nested
-    @DisplayName("JedisTransformer — descriptor 필터 검증 (FR-07)")
+    @DisplayName("JedisTransformer — descriptor 필터 검증")
     class JedisTransformerTest {
 
         private boolean isTargetCommand(String name) throws Exception {
@@ -119,7 +136,6 @@ class RedisPluginAdviceTest {
         @DisplayName("get(String) — String descriptor는 JedisAdvice 대상이어야 한다")
         void getStringDescriptor_isTarget() throws Exception {
             assertTrue(isTargetCommand("get"), "get은 대상 커맨드여야 함");
-            // descriptor.startsWith("(Ljava/lang/String;") 조건도 통과
             String descriptor = "(Ljava/lang/String;)Ljava/lang/String;";
             assertTrue(descriptor.startsWith("(Ljava/lang/String;"), "String descriptor 통과");
         }
@@ -142,12 +158,34 @@ class RedisPluginAdviceTest {
     }
 
     // -----------------------------------------------------------------------
-    // JedisAdvice (FR-07)
+    // JedisAdvice
     // -----------------------------------------------------------------------
 
     @Nested
-    @DisplayName("JedisAdvice — safeKeyToString 사용 검증 (FR-07)")
+    @DisplayName("JedisAdvice — HIT/MISS 판단 및 safeKeyToString 검증")
     class JedisAdviceTest {
+
+        @Test
+        @DisplayName("get onMethodExit: IFNONNULL 기반 HIT/MISS 판단 후 onCacheGet이 두 경로 모두 호출되어야 한다")
+        void get_onExit_callsOnCacheGetWithHitMissLogic() {
+            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
+            RedisPlugin.JedisAdvice advice = new RedisPlugin.JedisAdvice(
+                mv, Opcodes.ACC_PUBLIC, "get", "(Ljava/lang/String;)Ljava/lang/String;");
+
+            advice.onMethodEnter(); // keyLocalIdx 세팅
+            advice.onMethodExit(Opcodes.ARETURN);
+
+            // null 체크 분기 (IFNONNULL)
+            verify(mv).visitJumpInsn(eq(Opcodes.IFNONNULL), any(Label.class));
+            // onCacheGet: MISS 경로(false) + HIT 경로(true) = 2회
+            verify(mv, times(2)).visitMethodInsn(
+                eq(Opcodes.INVOKESTATIC),
+                eq("org/example/agent/core/TraceRuntime"),
+                eq("onCacheGet"),
+                eq("(Ljava/lang/String;Z)V"),
+                eq(false)
+            );
+        }
 
         @Test
         @DisplayName("set 호출 시 safeKeyToString → onCacheSet 순서로 주입되어야 한다")

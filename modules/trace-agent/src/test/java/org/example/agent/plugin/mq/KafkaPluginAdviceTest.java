@@ -40,20 +40,17 @@ class KafkaPluginAdviceTest {
     }
 
     @Test
-    @DisplayName("@KafkaListener 메서드 진입 시 onMqConsumeStart가 호출되어야 한다")
-    void testKafkaListenerAdviceOnMethodEnter() {
+    @DisplayName("MessagingMessageListenerAdapter.onMessage 진입 시 onMqConsumeStart가 호출되어야 한다")
+    void testKafkaAdapterAdviceOnMethodEnter() {
         MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-        boolean[] classModified = {false};
-        // Signature with ConsumerRecord at index 1
-        String desc = "(Lorg/apache/kafka/clients/consumer/ConsumerRecord;)V";
-        KafkaPlugin.KafkaListenerAdvice advice = new KafkaPlugin.KafkaListenerAdvice(mv, Opcodes.ACC_PUBLIC, "onMessage", desc, classModified);
-        
-        // Mocking the annotation visit
-        advice.visitAnnotation("Lorg/springframework/kafka/annotation/KafkaListener;", true);
+        // Descriptor must start with ConsumerRecord to match KafkaAdapterTransformer's filter
+        String desc = "(Lorg/apache/kafka/clients/consumer/ConsumerRecord;Ljava/lang/Object;Ljava/lang/Object;)V";
+        KafkaPlugin.KafkaAdapterAdvice advice = new KafkaPlugin.KafkaAdapterAdvice(
+                mv, Opcodes.ACC_PUBLIC, "onMessage", desc);
 
         advice.onMethodEnter();
 
-        // Verify that it calls TraceRuntime.onMqConsumeStart
+        // extractTxId → setTxIdIfPresent → extractTopic → TxIdHolder.get → onMqConsumeStart
         verify(mv, atLeastOnce()).visitMethodInsn(
             eq(Opcodes.INVOKESTATIC),
             eq("org/example/agent/core/TraceRuntime"),
