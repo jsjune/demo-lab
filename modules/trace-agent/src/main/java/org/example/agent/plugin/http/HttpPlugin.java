@@ -39,11 +39,23 @@ public class HttpPlugin implements TracerPlugin {
     }
 
     /**
-     * ClassWriter that uses the application's classloader to resolve type hierarchies.
-     * Required when COMPUTE_FRAMES is used: ASM calls getCommonSuperClass() for every
-     * two types that merge in the control flow, and the default implementation loads
-     * classes with the system classloader which may not see application types.
-     * Fallback to "java/lang/Object" on any error keeps instrumentation safe.
+     * ClassWriter using COMPUTE_FRAMES with a safe {@code getCommonSuperClass()} override.
+     *
+     * <p><b>Why COMPUTE_FRAMES (not COMPUTE_MAXS):</b>
+     * {@link DispatcherServletAdvice} injects conditional branches (IFEQ labels) into the
+     * instrumented method body. These new branch targets shift bytecode offsets and
+     * invalidate the original stack map frames. COMPUTE_MAXS only recomputes
+     * max_stack / max_locals and leaves existing frames unchanged, which would cause a
+     * {@code VerifyError} at class-load time. COMPUTE_FRAMES fully regenerates all stack
+     * map frames and is therefore mandatory for any advice that introduces new control flow.
+     *
+     * <p><b>Why override {@code getCommonSuperClass()}:</b>
+     * COMPUTE_FRAMES triggers ASM's type-merge logic, which calls
+     * {@code getCommonSuperClass()} for every pair of types that meet in control flow.
+     * The default {@code ClassWriter} implementation resolves classes via the system
+     * classloader, which may not see application types loaded by a child classloader.
+     * This override resolves types through the application classloader and falls back to
+     * {@code "java/lang/Object"} on any error, keeping instrumentation safe.
      */
     static class SafeClassWriter extends ClassWriter {
         private final ClassLoader loader;
@@ -77,10 +89,13 @@ public class HttpPlugin implements TracerPlugin {
             }
             try {
                 ClassReader reader = new ClassReader(classfileBuffer);
-                // COMPUTE_FRAMES is required here: the DispatcherServletAdvice injects
-                // conditional branches (IFEQ labels) which shift bytecode offsets and
-                // invalidate the existing stack map frames. COMPUTE_MAXS only recomputes
-                // max stack/locals and does NOT recompute frames, causing VerifyError.
+                // SafeClassWriter (COMPUTE_FRAMES) is required: DispatcherServletAdvice injects
+                // conditional branches (IFEQ labels), which shift bytecode offsets and invalidate
+                // existing stack map frames. COMPUTE_MAXS only recomputes max_stack/max_locals
+                // and leaves frames unchanged, causing VerifyError.
+                // SafeClassWriter also overrides getCommonSuperClass() to resolve types via the
+                // application classloader, preventing ClassNotFoundException when COMPUTE_FRAMES
+                // triggers ASM's type-merge logic for app-classloader-only types.
                 ClassWriter writer = new SafeClassWriter(reader, loader);
                 reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
                     @Override
