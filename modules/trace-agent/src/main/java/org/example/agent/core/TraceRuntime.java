@@ -50,7 +50,7 @@ public class TraceRuntime {
     private static final java.util.concurrent.ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
         HTTP_STATUS_CODE_METHOD_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
 
-    // ClassLoader → HttpStatusCode.value() Method (shared by wrapWebClientExchange, emitHttpOutError, onHttpOutError)
+    // ClassLoader → HttpStatusCode.value() Method (shared by wrapWebClientExchange, emitHttpOutWithSpan, emitHttpOutErrorWithSpan)
     private static final java.util.concurrent.ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
         HTTP_STATUS_VALUE_METHOD_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -115,7 +115,10 @@ public class TraceRuntime {
                 }
             }
             if (txId != null) {
-                TcpSender.send(createEvent(txId, TraceEventType.HTTP_IN_START, TraceCategory.HTTP, method + " " + path, null, true, null));
+                String rootSpanId = generateSpanId();
+                SpanIdHolder.set(rootSpanId);
+                TcpSender.send(createRootEvent(txId, TraceEventType.HTTP_IN_START, TraceCategory.HTTP,
+                        method + " " + path, null, true, null, rootSpanId));
             }
         });
     }
@@ -130,6 +133,8 @@ public class TraceRuntime {
         safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;
+            String rootSpanId = SpanIdHolder.get();
+            if (rootSpanId == null) rootSpanId = generateSpanId();
             boolean success = statusCode >= 200 && statusCode < 400;
             Map<String, Object> extra = new LinkedHashMap<>();
             extra.put("statusCode", statusCode);
@@ -137,9 +142,11 @@ public class TraceRuntime {
                 extra.put("errorType", statusCode >= 500 ? "ServerError" : "ClientError");
                 extra.put("errorMessage", "HTTP " + statusCode);
             }
-            TcpSender.send(createEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP, method + " " + path, durationMs, success, extra));
+            TcpSender.send(createRootEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
+                    method + " " + path, durationMs, success, extra, rootSpanId));
             debugLog("[HTTP-IN] " + method + " " + path + " → " + statusCode + " (" + durationMs + "ms) txId=" + txId);
             TxIdHolder.clear();
+            SpanIdHolder.clear();
         });
     }
 
@@ -153,15 +160,19 @@ public class TraceRuntime {
         safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;
+            String rootSpanId = SpanIdHolder.get();
+            if (rootSpanId == null) rootSpanId = generateSpanId();
             Map<String, Object> extra = new LinkedHashMap<>();
             extra.put("statusCode", -1);
             extra.put("errorType", t != null ? t.getClass().getSimpleName() : "UnknownError");
             extra.put("errorMessage", t != null ? truncateMessage(t.getMessage()) : null);
-            TcpSender.send(createEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP, method + " " + path, durationMs, false, extra));
+            TcpSender.send(createRootEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
+                    method + " " + path, durationMs, false, extra, rootSpanId));
             debugLog("[HTTP-IN] " + method + " " + path + " → ERROR "
                 + (t != null ? t.getClass().getSimpleName() : "?")
                 + " (" + durationMs + "ms) txId=" + txId);
             TxIdHolder.clear();
+            SpanIdHolder.clear();
         });
     }
 
@@ -202,7 +213,7 @@ public class TraceRuntime {
             extra.put("statusCode", statusCode);
             extra.put("errorType", t != null ? t.getClass().getSimpleName() : "UnknownError");
             extra.put("errorMessage", t != null ? truncateMessage(t.getMessage()) : null);
-            TcpSender.send(createEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP, url, durationMs, false, extra));
+            TcpSender.send(createChildEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP, url, durationMs, false, extra));
             debugLog("[HTTP-OUT] " + method + " " + url + " → ERROR " + statusCode + " "
                 + (t != null ? t.getClass().getSimpleName() : "?")
                 + " (" + durationMs + "ms)");
@@ -216,7 +227,8 @@ public class TraceRuntime {
             Map<String, Object> extra = new HashMap<>();
             extra.put("statusCode", statusCode);
             extra.put("method", method);
-            TcpSender.send(createEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP, uri, durationMs, statusCode >= 200 && statusCode < 400, extra));
+            TcpSender.send(createChildEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP, uri, durationMs,
+                    statusCode >= 200 && statusCode < 400, extra));
             debugLog("[HTTP-OUT] " + method + " " + uri + " → " + statusCode + " (" + durationMs + "ms)");
         });
     }
@@ -229,7 +241,7 @@ public class TraceRuntime {
             extra.put("brokerType", brokerType);
             extra.put("topic", topic);
             extra.put("key", key);
-            TcpSender.send(createEvent(txId, TraceEventType.MQ_PRODUCE, TraceCategory.MQ, topic, null, true, extra));
+            TcpSender.send(createChildEvent(txId, TraceEventType.MQ_PRODUCE, TraceCategory.MQ, topic, null, true, extra));
             debugLog("[MQ-PRODUCE] " + brokerType.toUpperCase()
                 + " topic=" + topic + (key != null ? " key=" + key : ""));
         });
@@ -256,10 +268,13 @@ public class TraceRuntime {
                     debugLog("[MQ-CONSUME] Generated new txId (no upstream): " + txId);
                 }
             }
+            String rootSpanId = generateSpanId();
+            SpanIdHolder.set(rootSpanId);
             Map<String, Object> extra = new HashMap<>();
             extra.put("brokerType", brokerType);
             extra.put("topic", topic);
-            TcpSender.send(createEvent(txId, TraceEventType.MQ_CONSUME_START, TraceCategory.MQ, topic, null, true, extra));
+            TcpSender.send(createRootEvent(txId, TraceEventType.MQ_CONSUME_START, TraceCategory.MQ,
+                    topic, null, true, extra, rootSpanId));
         });
     }
 
@@ -272,13 +287,17 @@ public class TraceRuntime {
         safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;
+            String rootSpanId = SpanIdHolder.get();
+            if (rootSpanId == null) rootSpanId = generateSpanId();
             Map<String, Object> extra = new HashMap<>();
             extra.put("brokerType", brokerType);
             extra.put("topic", topic);
-            TcpSender.send(createEvent(txId, TraceEventType.MQ_CONSUME_END, TraceCategory.MQ, topic, durationMs, true, extra));
+            TcpSender.send(createRootEvent(txId, TraceEventType.MQ_CONSUME_END, TraceCategory.MQ,
+                    topic, durationMs, true, extra, rootSpanId));
             debugLog("[MQ-CONSUME] " + brokerType.toUpperCase()
                 + " topic=" + topic + " END " + durationMs + "ms txId=" + txId);
             TxIdHolder.clear();
+            SpanIdHolder.clear();
         });
     }
 
@@ -291,17 +310,21 @@ public class TraceRuntime {
         safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;
+            String rootSpanId = SpanIdHolder.get();
+            if (rootSpanId == null) rootSpanId = generateSpanId();
             Map<String, Object> extra = new LinkedHashMap<>();
             extra.put("brokerType", brokerType);
             extra.put("topic", topic);
             extra.put("errorType", t != null ? t.getClass().getSimpleName() : "UnknownError");
             extra.put("errorMessage", t != null ? truncateMessage(t.getMessage()) : null);
-            TcpSender.send(createEvent(txId, TraceEventType.MQ_CONSUME_END, TraceCategory.MQ, topic, durationMs, false, extra));
+            TcpSender.send(createRootEvent(txId, TraceEventType.MQ_CONSUME_END, TraceCategory.MQ,
+                    topic, durationMs, false, extra, rootSpanId));
             debugLog("[MQ-CONSUME] " + brokerType.toUpperCase()
                 + " topic=" + topic + " ERROR " + durationMs + "ms "
                 + (t != null ? t.getClass().getSimpleName() : "?")
                 + " txId=" + txId);
             TxIdHolder.clear();
+            SpanIdHolder.clear();
         });
     }
 
@@ -337,7 +360,7 @@ public class TraceRuntime {
                 debugLog("[DB] END " + durationMs + "ms — " + sqlPreview(sql));
             }
             String target = dbHost != null && !dbHost.isEmpty() ? dbHost : "unknown-db";
-            TcpSender.send(createEvent(txId, TraceEventType.DB_QUERY_END, TraceCategory.DB, target, durationMs, true, extra));
+            TcpSender.send(createChildEvent(txId, TraceEventType.DB_QUERY_END, TraceCategory.DB, target, durationMs, true, extra));
         });
     }
 
@@ -358,7 +381,7 @@ public class TraceRuntime {
                 + (t != null ? t.getClass().getSimpleName() : "?")
                 + " — " + sqlPreview(sql));
             String target = dbHost != null && !dbHost.isEmpty() ? dbHost : "unknown-db";
-            TcpSender.send(createEvent(txId, TraceEventType.DB_QUERY_END, TraceCategory.DB, target, durationMs, false, extra));
+            TcpSender.send(createChildEvent(txId, TraceEventType.DB_QUERY_END, TraceCategory.DB, target, durationMs, false, extra));
         });
     }
 
@@ -371,7 +394,7 @@ public class TraceRuntime {
             debugLog("[FILE] READ " + path + " " + sizeBytes + "B (" + durationMs + "ms)");
             Map<String, Object> extra = new HashMap<>();
             extra.put("sizeBytes", sizeBytes);
-            TcpSender.send(createEvent(txId, TraceEventType.FILE_READ, TraceCategory.IO, path, durationMs, success, extra));
+            TcpSender.send(createChildEvent(txId, TraceEventType.FILE_READ, TraceCategory.IO, path, durationMs, success, extra));
         });
     }
 
@@ -383,7 +406,7 @@ public class TraceRuntime {
             debugLog("[FILE] WRITE " + path + " " + sizeBytes + "B (" + durationMs + "ms)");
             Map<String, Object> extra = new HashMap<>();
             extra.put("sizeBytes", sizeBytes);
-            TcpSender.send(createEvent(txId, TraceEventType.FILE_WRITE, TraceCategory.IO, path, durationMs, success, extra));
+            TcpSender.send(createChildEvent(txId, TraceEventType.FILE_WRITE, TraceCategory.IO, path, durationMs, success, extra));
         });
     }
 
@@ -451,9 +474,10 @@ public class TraceRuntime {
             }
 
             long startTime = System.currentTimeMillis();
-            // Capture txId here on the calling thread; the Reactor scheduler may run the
-            // callbacks on a different thread where TxIdHolder (ThreadLocal) is null.
-            final String capturedTxId = txId;
+            // Capture txId and spanId here on the calling thread; the Reactor scheduler may run
+            // the callbacks on a different thread where ThreadLocals are null.
+            final String capturedTxId   = txId;
+            final String capturedSpanId = SpanIdHolder.get();
 
             // doOnSuccess: extract status code via statusCode().value() reflection chain.
             // IMPORTANT: look up methods on the PUBLIC INTERFACES (ClientResponse, HttpStatusCode),
@@ -486,16 +510,17 @@ public class TraceRuntime {
                         });
                     if (valueMethod == null) throw new IllegalStateException("value method not found");
                     int statusCode = (int) valueMethod.invoke(statusCodeObj);
-                    emitHttpOut(capturedTxId, method, uri, statusCode, durationMs);
+                    emitHttpOutWithSpan(capturedTxId, capturedSpanId, method, uri, statusCode, durationMs);
                 } catch (Throwable t) {
-                    emitHttpOut(capturedTxId, method, uri, -1, System.currentTimeMillis() - startTime, t);
+                    emitHttpOutWithSpan(capturedTxId, capturedSpanId, method, uri, -1,
+                            System.currentTimeMillis() - startTime, t);
                 }
             };
 
             // doOnError: emit HTTP_OUT error event with exception details
             java.util.function.Consumer<Throwable> errorConsumer = err -> {
                 long durationMs = System.currentTimeMillis() - startTime;
-                emitHttpOutError(capturedTxId, err, method, uri, durationMs);
+                emitHttpOutErrorWithSpan(capturedTxId, capturedSpanId, err, method, uri, durationMs);
             };
 
             java.lang.reflect.Method doOnSuccessMethod =
@@ -514,9 +539,10 @@ public class TraceRuntime {
     // Internal helpers
     // -----------------------------------------------------------------------
 
-    /** Used by WebClient callbacks that run on a Reactor thread (TxIdHolder is unavailable there). */
-    private static void emitHttpOut(String txId, String method, String uri, int statusCode, long durationMs) {
-        emitHttpOut(txId, method, uri, statusCode, durationMs, null);
+    /** Used by WebClient success callbacks that run on a Reactor thread (ThreadLocals unavailable). */
+    private static void emitHttpOutWithSpan(String txId, String parentSpanId,
+            String method, String uri, int statusCode, long durationMs) {
+        emitHttpOutWithSpan(txId, parentSpanId, method, uri, statusCode, durationMs, null);
     }
 
     /**
@@ -524,7 +550,8 @@ public class TraceRuntime {
      * failure reading the response status code). The cause fields help diagnose why -1 appears.
      * Also synthesises errorType/errorMessage for non-2xx responses even when cause is null.
      */
-    private static void emitHttpOut(String txId, String method, String uri, int statusCode, long durationMs, Throwable cause) {
+    private static void emitHttpOutWithSpan(String txId, String parentSpanId,
+            String method, String uri, int statusCode, long durationMs, Throwable cause) {
         safeRun(() -> {
             if (txId == null) return;
             boolean success = statusCode >= 200 && statusCode < 400;
@@ -538,13 +565,15 @@ public class TraceRuntime {
                 extra.put("errorType", statusCode >= 500 ? "ServerError" : "ClientError");
                 extra.put("errorMessage", "HTTP " + statusCode);
             }
-            TcpSender.send(createEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP, uri, durationMs, success, extra));
+            TcpSender.send(buildEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP, uri, durationMs, success, extra,
+                    generateSpanId(), parentSpanId));
             debugLog("[HTTP-OUT] " + method + " " + uri + " → " + statusCode + " (" + durationMs + "ms)");
         });
     }
 
     /** Used by WebClient error callbacks that run on a Reactor thread. */
-    private static void emitHttpOutError(String txId, Throwable t, String method, String uri, long durationMs) {
+    private static void emitHttpOutErrorWithSpan(String txId, String parentSpanId,
+            Throwable t, String method, String uri, long durationMs) {
         safeRun(() -> {
             if (txId == null) return;
             // Try to extract the actual HTTP status code from WebClientResponseException.
@@ -586,7 +615,8 @@ public class TraceRuntime {
             extra.put("statusCode", statusCode);
             extra.put("errorType", t != null ? t.getClass().getSimpleName() : "UnknownError");
             extra.put("errorMessage", t != null ? truncateMessage(t.getMessage()) : null);
-            TcpSender.send(createEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP, uri, durationMs, false, extra));
+            TcpSender.send(buildEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP, uri, durationMs, false, extra,
+                    generateSpanId(), parentSpanId));
             debugLog("[HTTP-OUT] " + method + " " + uri + " → ERROR " + statusCode + " "
                 + (t != null ? t.getClass().getSimpleName() : "?")
                 + " (" + durationMs + "ms)");
@@ -598,28 +628,56 @@ public class TraceRuntime {
         safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;
-            TcpSender.send(createEvent(txId, type, category, target, durationMs, success, extra));
+            TcpSender.send(createChildEvent(txId, type, category, target, durationMs, success, extra));
         });
     }
 
-    private static TraceEvent createEvent(String txId, TraceEventType type, TraceCategory category,
-                                          String target, Long durationMs, boolean success,
-                                          Map<String, Object> extraInfo) {
+    // -----------------------------------------------------------------------
+    // Span factory methods
+    // -----------------------------------------------------------------------
+
+    /**
+     * Creates a root-span event (HTTP_IN_START/END, MQ_CONSUME_START/END).
+     * parentSpanId is always null for root spans.
+     * The caller is responsible for providing the spanId (stored in SpanIdHolder).
+     */
+    private static TraceEvent createRootEvent(String txId, TraceEventType type, TraceCategory category,
+            String target, Long durationMs, boolean success, Map<String, Object> extra, String spanId) {
+        return buildEvent(txId, type, category, target, durationMs, success, extra, spanId, null);
+    }
+
+    /**
+     * Creates a child-span event (DB, Cache, IO, HTTP_OUT, MQ_PRODUCE).
+     * Generates a new unique spanId and sets parentSpanId = SpanIdHolder.get().
+     * If SpanIdHolder is null (no active root span), parentSpanId will be null.
+     */
+    private static TraceEvent createChildEvent(String txId, TraceEventType type, TraceCategory category,
+            String target, Long durationMs, boolean success, Map<String, Object> extra) {
+        return buildEvent(txId, type, category, target, durationMs, success, extra,
+                generateSpanId(), SpanIdHolder.get());
+    }
+
+    /**
+     * Common event builder. All span fields (spanId, parentSpanId) are explicit.
+     */
+    private static TraceEvent buildEvent(String txId, TraceEventType type, TraceCategory category,
+            String target, Long durationMs, boolean success, Map<String, Object> extra,
+            String spanId, String parentSpanId) {
         long now = System.currentTimeMillis();
-        String spanId = now + "-" + java.util.UUID.randomUUID().toString().substring(0, 8);
         return new TraceEvent(
             AgentConfig.getServerName() + "-" + EVENT_SEQ.incrementAndGet(),
-            txId,
-            spanId,
-            type,
-            category,
-            AgentConfig.getServerName(),
-            target,
-            durationMs,
-            success,
-            now,
-            extraInfo != null ? extraInfo : new HashMap<>()
+            txId, spanId, parentSpanId,
+            type, category,
+            AgentConfig.getServerName(), target,
+            durationMs, success, now,
+            extra != null ? extra : new HashMap<>()
         );
+    }
+
+    /** Generates a unique span ID: timestamp prefix + 8-char UUID fragment. */
+    private static String generateSpanId() {
+        long now = System.currentTimeMillis();
+        return now + "-" + java.util.UUID.randomUUID().toString().substring(0, 8);
     }
 
     private static void safeRun(Runnable runnable) {

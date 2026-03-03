@@ -37,6 +37,7 @@ public class TraceRepository {
                     rs.getString("event_id"),
                     rs.getString("tx_id"),
                     rs.getString("span_id"),
+                    rs.getString("parent_span_id"),
                     TraceEventType.valueOf(rs.getString("type")),
                     TraceCategory.valueOf(rs.getString("category")),
                     rs.getString("server_name"),

@@ -24,5 +24,11 @@ CREATE INDEX IF NOT EXISTS idx_trace_events_tx_id ON trace_events(tx_id);
 -- Index for span_id
 CREATE INDEX IF NOT EXISTS idx_trace_events_span_id ON trace_events(span_id);
 
+-- parent_span_id column for span hierarchy tracking
+ALTER TABLE trace_events ADD COLUMN IF NOT EXISTS parent_span_id VARCHAR(64);
+
+-- Index for parent_span_id (Span Tree traversal)
+CREATE INDEX IF NOT EXISTS idx_trace_events_parent_span_id ON trace_events(parent_span_id);
+
 -- Index for monitoring metrics (TPS, Latency, Error Rate)
 CREATE INDEX IF NOT EXISTS idx_trace_events_metrics ON trace_events(timestamp, type);

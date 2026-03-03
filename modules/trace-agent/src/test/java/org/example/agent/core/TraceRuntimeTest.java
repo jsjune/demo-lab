@@ -1,6 +1,7 @@
 package org.example.agent.core;
 
 import jakarta.servlet.DispatcherType;
+import org.example.common.TraceEvent;
 import org.example.common.TraceEventType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -9,6 +10,9 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.springframework.mock.web.MockHttpServletRequest;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -22,12 +26,14 @@ class TraceRuntimeTest {
     @BeforeEach
     void setUp() {
         TxIdHolder.clear();
+        SpanIdHolder.clear();
         tcpSenderMock = mockStatic(TcpSender.class);
     }
 
     @AfterEach
     void tearDown() {
         TxIdHolder.clear();
+        SpanIdHolder.clear();
         tcpSenderMock.close();
     }
 
@@ -172,6 +178,171 @@ class TraceRuntimeTest {
         @DisplayName("getAttribute를 지원하지 않는 일반 객체는 false를 반환해야 한다 (안전 폴백)")
         void plainObject_returnsFalse() {
             assertFalse(TraceRuntime.isErrorDispatch(new Object()));
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Span 계층 추적 테스트 (Phase 2)
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("Span 계층 추적: HTTP 루트 Span과 자식 Span")
+    class SpanHierarchyTest {
+
+        private List<TraceEvent> captured;
+
+        @BeforeEach
+        void setUp() {
+            captured = new ArrayList<>();
+            tcpSenderMock.when(() -> TcpSender.send(any()))
+                .thenAnswer(inv -> { captured.add(inv.getArgument(0)); return null; });
+        }
+
+        @AfterEach
+        void tearDown() {
+            SpanIdHolder.clear();
+            TxIdHolder.clear();
+        }
+
+        @Test
+        @DisplayName("onHttpInStart() 호출 후 SpanIdHolder에 루트 spanId가 저장되어야 한다")
+        void httpInStart_setsSpanIdHolder() {
+            TraceRuntime.onHttpInStart("GET", "/api/test", "tx-001", false);
+
+            assertNotNull(SpanIdHolder.get(), "onHttpInStart() 후 SpanIdHolder는 null이 아니어야 한다");
+        }
+
+        @Test
+        @DisplayName("HTTP_IN_START 이벤트의 parentSpanId는 null이어야 한다 (루트 span)")
+        void httpInStart_rootEventHasNullParentSpanId() {
+            TraceRuntime.onHttpInStart("GET", "/api/test", "tx-001", false);
+
+            assertFalse(captured.isEmpty());
+            TraceEvent startEvent = captured.get(0);
+            assertEquals(TraceEventType.HTTP_IN_START, startEvent.type());
+            assertNull(startEvent.parentSpanId(), "루트 span의 parentSpanId는 null이어야 한다");
+        }
+
+        @Test
+        @DisplayName("HTTP_IN_START와 HTTP_IN_END 이벤트는 동일한 spanId를 공유해야 한다")
+        void httpInEnd_usesSameSpanIdAsStart() {
+            TraceRuntime.onHttpInStart("GET", "/api/test", "tx-001", false);
+            TraceRuntime.onHttpInEnd("GET", "/api/test", 200, 50L);
+
+            assertEquals(2, captured.size());
+            String startSpanId = captured.get(0).spanId();
+            String endSpanId   = captured.get(1).spanId();
+            assertNotNull(startSpanId);
+            assertEquals(startSpanId, endSpanId,
+                "START와 END 이벤트는 동일한 spanId를 가져야 한다");
+        }
+
+        @Test
+        @DisplayName("HTTP_IN_END 이벤트의 parentSpanId는 null이어야 한다 (루트 span)")
+        void httpInEnd_rootEventHasNullParentSpanId() {
+            TraceRuntime.onHttpInStart("GET", "/api/test", "tx-001", false);
+            TraceRuntime.onHttpInEnd("GET", "/api/test", 200, 50L);
+
+            TraceEvent endEvent = captured.get(1);
+            assertNull(endEvent.parentSpanId(), "루트 span END의 parentSpanId는 null이어야 한다");
+        }
+
+        @Test
+        @DisplayName("onHttpInEnd() 호출 후 SpanIdHolder가 클리어되어야 한다")
+        void httpInEnd_clearsSpanIdHolder() {
+            TraceRuntime.onHttpInStart("GET", "/api/test", "tx-001", false);
+            TraceRuntime.onHttpInEnd("GET", "/api/test", 200, 50L);
+
+            assertNull(SpanIdHolder.get(), "onHttpInEnd() 후 SpanIdHolder는 null이어야 한다");
+            assertNull(TxIdHolder.get(),   "onHttpInEnd() 후 TxIdHolder도 null이어야 한다");
+        }
+
+        @Test
+        @DisplayName("HTTP 처리 중 발생한 DB 쿼리는 HTTP 루트 spanId를 parentSpanId로 가져야 한다")
+        void dbQueryEnd_parentSpanIdEqualsRootSpanId() {
+            TraceRuntime.onHttpInStart("GET", "/api/test", "tx-001", false);
+            String rootSpanId = SpanIdHolder.get();
+            assertNotNull(rootSpanId);
+
+            TraceRuntime.onDbQueryEnd("SELECT 1", 10L, "localhost");
+
+            TraceEvent dbEvent = captured.stream()
+                .filter(e -> e.type() == TraceEventType.DB_QUERY_END)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("DB_QUERY_END 이벤트가 없음"));
+
+            assertEquals(rootSpanId, dbEvent.parentSpanId(),
+                "DB 이벤트의 parentSpanId는 HTTP 루트 spanId여야 한다");
+        }
+
+        @Test
+        @DisplayName("DB 자식 span은 루트 spanId와 다른 고유한 spanId를 가져야 한다")
+        void dbQueryEnd_childSpanHasDistinctSpanId() {
+            TraceRuntime.onHttpInStart("GET", "/api/test", "tx-001", false);
+            String rootSpanId = SpanIdHolder.get();
+
+            TraceRuntime.onDbQueryEnd("SELECT 1", 10L, "localhost");
+
+            TraceEvent dbEvent = captured.stream()
+                .filter(e -> e.type() == TraceEventType.DB_QUERY_END)
+                .findFirst()
+                .orElseThrow();
+
+            assertNotEquals(rootSpanId, dbEvent.spanId(),
+                "DB 자식 span의 spanId는 루트 spanId와 달라야 한다");
+        }
+
+        @Test
+        @DisplayName("HTTP 처리 중 발생한 외부 HTTP 호출도 루트 spanId를 parentSpanId로 가져야 한다")
+        void httpOut_parentSpanIdEqualsRootSpanId() {
+            TraceRuntime.onHttpInStart("POST", "/api/order", "tx-002", false);
+            String rootSpanId = SpanIdHolder.get();
+
+            TraceRuntime.onHttpOut("GET", "http://payment-svc/pay", 200, 30L);
+
+            TraceEvent httpOutEvent = captured.stream()
+                .filter(e -> e.type() == TraceEventType.HTTP_OUT)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("HTTP_OUT 이벤트가 없음"));
+
+            assertEquals(rootSpanId, httpOutEvent.parentSpanId(),
+                "HTTP_OUT 이벤트의 parentSpanId는 HTTP 루트 spanId여야 한다");
+        }
+
+        @Test
+        @DisplayName("MQ_CONSUME_START와 MQ_CONSUME_END는 동일한 spanId를 공유해야 한다")
+        void mqConsumeEnd_usesSameSpanIdAsStart() {
+            TraceRuntime.onMqConsumeStart("kafka", "orders", "tx-mq-001");
+            TraceRuntime.onMqConsumeEnd("kafka", "orders", 80L);
+
+            assertEquals(2, captured.size());
+            String startSpanId = captured.get(0).spanId();
+            String endSpanId   = captured.get(1).spanId();
+            assertEquals(startSpanId, endSpanId,
+                "MQ START와 END는 동일한 spanId를 가져야 한다");
+        }
+
+        @Test
+        @DisplayName("onMqConsumeEnd() 호출 후 SpanIdHolder가 클리어되어야 한다")
+        void mqConsumeEnd_clearsSpanIdHolder() {
+            TraceRuntime.onMqConsumeStart("kafka", "orders", "tx-mq-001");
+            TraceRuntime.onMqConsumeEnd("kafka", "orders", 80L);
+
+            assertNull(SpanIdHolder.get(), "onMqConsumeEnd() 후 SpanIdHolder는 null이어야 한다");
+        }
+
+        @Test
+        @DisplayName("활성 루트 span 없이 DB 쿼리가 발생하면 parentSpanId는 null이어야 한다")
+        void noRootSpan_dbQueryEnd_parentSpanIdIsNull() {
+            TxIdHolder.set("tx-isolated");
+            // SpanIdHolder is NOT set — simulates event outside HTTP/MQ context
+
+            TraceRuntime.onDbQueryEnd("SELECT 1", 5L, "localhost");
+
+            assertFalse(captured.isEmpty());
+            TraceEvent dbEvent = captured.get(0);
+            assertNull(dbEvent.parentSpanId(),
+                "루트 span 없이 발생한 DB 이벤트의 parentSpanId는 null이어야 한다");
         }
     }
 }

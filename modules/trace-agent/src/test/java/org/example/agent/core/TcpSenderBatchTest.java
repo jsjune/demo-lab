@@ -202,7 +202,7 @@ class TcpSenderBatchTest {
 
     private TraceEvent createDummyEvent(String txId) {
         return new TraceEvent(
-            "id", txId, "s-1", TraceEventType.HTTP_IN_START, TraceCategory.HTTP,
+            "id", txId, "s-1", null, TraceEventType.HTTP_IN_START, TraceCategory.HTTP,
             "server", "target", 0L, true, System.currentTimeMillis(), Map.of()
         );
     }

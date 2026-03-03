@@ -8,6 +8,7 @@ public record TraceEvent(
     String eventId,
     String txId,
     String spanId,
+    String parentSpanId,
     TraceEventType type,
     TraceCategory category,
     String serverName,
