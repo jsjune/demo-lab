@@ -10,213 +10,122 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * Global entry point for all instrumented code.
- * All public static onXxx() signatures are part of the bytecode ABI and must not change.
- *
- * <p>Safety guarantee: every method is wrapped in safeRun() so agent logic can never
- * propagate an exception to the target application.
- */
 public class TraceRuntime {
-
-    /**
-     * Returns true when the HttpServletRequest is Spring Boot's internal error-dispatch
-     * (i.e. an error forward or native ERROR dispatch — NOT a direct client request).
-     *
-     * <p>Two detection strategies, tried in order:
-     * <ol>
-     *   <li><b>DispatcherType.ERROR</b> — native container error dispatch (Tomcat / Jetty
-     *       handle the error page themselves, used by Spring Boot 4 by default).
-     *       The container sets DispatcherType to ERROR on the forwarded request.
-     *   <li><b>Error attribute</b> — Spring Boot's {@code ErrorPageFilter} path: ErrorPageFilter
-     *       catches the exception, sets {@code jakarta/javax.servlet.error.request_uri} on the
-     *       request, then does a {@code RequestDispatcher.forward()} (DispatcherType=FORWARD).
-     *       Attribute is checked via the public {@code jakarta/javax.servlet.ServletRequest}
-     *       <em>interface</em> to avoid JPMS access errors on non-exported Tomcat internals.
-     * </ol>
-     *
-     * <p>A direct client {@code GET /error} has neither ERROR DispatcherType nor the error
-     * attribute, so it is correctly passed through and traced.
-     *
-     * <p>Called from injected bytecode in DispatcherServletAdvice — must remain public static.
-     */
     private static final AtomicLong EVENT_SEQ = new AtomicLong(0);
 
-    // Cache getAttribute(String) Method per ClassLoader (keyed on the interface, stable per CL).
     private static final java.util.concurrent.ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
         GET_ATTR_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
-
-    // ClassLoader → ClientResponse.statusCode() Method
     private static final java.util.concurrent.ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
         HTTP_STATUS_CODE_METHOD_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
-
-    // ClassLoader → HttpStatusCode.value() Method (shared by wrapWebClientExchange, emitHttpOutWithSpan, emitHttpOutErrorWithSpan)
     private static final java.util.concurrent.ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
         HTTP_STATUS_VALUE_METHOD_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
-
-    // ClassLoader → WebClientResponseException.getStatusCode() Method
     private static final java.util.concurrent.ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
         WC_EXCEPTION_STATUS_METHOD_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
 
-    public static boolean isErrorDispatch(Object request) {
-        try {
-            // Strategy 1: DispatcherType == ERROR  (native container error dispatch)
-            try {
-                java.lang.reflect.Method gdt = request.getClass().getMethod("getDispatcherType");
-                Object dt = gdt.invoke(request);
-                if ("ERROR".equals(String.valueOf(dt))) return true;
-            } catch (Throwable ignored) {}
+    private static final java.util.concurrent.ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
+        WF_GET_REQUEST_CACHE  = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
+        WF_GET_RESPONSE_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
+        WF_REQ_METHOD_CACHE   = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
+        WF_REQ_URI_CACHE      = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
+        WF_REQ_HEADERS_CACHE  = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
+        WF_RESP_STATUS_CACHE  = new java.util.concurrent.ConcurrentHashMap<>();
 
-            // Strategy 2: error attribute set by ErrorPageFilter (DispatcherType == FORWARD)
-            // Get getAttribute() from the public ServletRequest interface — avoids JPMS
-            // IllegalAccessException that can occur on non-exported Tomcat/Jetty internals.
+    /**
+     * Highly robust check to prevent duplicate transaction IDs on Async Resume or Error Dispatch.
+     */
+    public static boolean shouldSkipTracking(Object request) {
+        try {
             ClassLoader cl = request.getClass().getClassLoader();
             if (cl == null) cl = ClassLoader.getSystemClassLoader();
-            final ClassLoader resolveLoader = cl;
-            java.lang.reflect.Method getAttribute = GET_ATTR_CACHE.computeIfAbsent(
-                resolveLoader,
-                loader -> {
-                    for (String iface : new String[]{
-                            "jakarta.servlet.ServletRequest",
-                            "javax.servlet.ServletRequest"}) {
-                        try {
-                            return Class.forName(iface, false, loader)
-                                       .getMethod("getAttribute", String.class);
-                        } catch (Throwable ignored) {}
+            
+            // 1. Check DispatcherType (Standard Servlet way)
+            // Use interface classes to ensure method visibility
+            String[] requestInterfaces = { "jakarta.servlet.ServletRequest", "javax.servlet.ServletRequest" };
+            for (String iface : requestInterfaces) {
+                try {
+                    Class<?> reqClass = Class.forName(iface, false, cl);
+                    if (reqClass.isInstance(request)) {
+                        java.lang.reflect.Method gdt = reqClass.getMethod("getDispatcherType");
+                        Object type = gdt.invoke(request);
+                        if (type != null) {
+                            String name = type.toString();
+                            if ("ASYNC".equals(name) || "ERROR".equals(name)) return true;
+                        }
+                        break; 
                     }
-                    return null;
-                });
-            if (getAttribute == null) return false;
-            return getAttribute.invoke(request, "jakarta.servlet.error.request_uri") != null
-                || getAttribute.invoke(request, "javax.servlet.error.request_uri") != null;
-        } catch (Throwable ignored) {
-            return false;
-        }
+                } catch (Throwable ignored) {}
+            }
+
+            // 2. Fallback: Check Spring-specific WebAsyncManager attribute
+            // If hasConcurrentResult is true, this is a resume dispatch.
+            for (String iface : requestInterfaces) {
+                try {
+                    Class<?> reqClass = Class.forName(iface, false, cl);
+                    if (reqClass.isInstance(request)) {
+                        java.lang.reflect.Method getAttr = reqClass.getMethod("getAttribute", String.class);
+                        Object manager = getAttr.invoke(request, "org.springframework.web.context.request.async.WebAsyncManager.WEB_ASYNC_MANAGER");
+                        if (manager != null) {
+                            java.lang.reflect.Method hasResult = manager.getClass().getMethod("hasConcurrentResult");
+                            if (Boolean.TRUE.equals(hasResult.invoke(manager))) return true;
+                        }
+                        break;
+                    }
+                } catch (Throwable ignored) {}
+            }
+        } catch (Throwable ignored) {}
+        return false;
     }
 
-    public static void onHttpInStart(String method, String path, String incomingTxId, boolean forceTrace) {
+    public static void onHttpInStart(String method, String path, String incomingTxId, String incomingSpanId, boolean forceTrace) {
         safeRun(() -> {
-            String txId = incomingTxId;
-            if (txId != null && !txId.isEmpty()) {
-                TxIdHolder.set(txId);
-                debugLog("[HTTP-IN] Adopted incoming txId from headers: " + txId);
-            } else {
-                if (TxIdHolder.get() != null) {
-                    txId = TxIdHolder.get();
-                    debugLog("[HTTP-IN] Reusing existing txId from context: " + txId);
-                } else {
-                    if (!forceTrace && !TxIdGenerator.shouldSample()) {
-                        debugLog("[HTTP-IN] Not sampling this request.");
-                        return;
-                    }
-                    TxIdHolder.set(TxIdGenerator.generate());
-                    txId = TxIdHolder.get();
-                    debugLog("[HTTP-IN] Generated new txId: " + txId);
-                }
+            if (incomingTxId != null && !incomingTxId.isEmpty()) {
+                TxIdHolder.set(incomingTxId);
+            } else if (TxIdHolder.get() == null) {
+                if (!forceTrace && !TxIdGenerator.shouldSample()) return;
+                TxIdHolder.set(TxIdGenerator.generate());
             }
+            
+            String txId = TxIdHolder.get();
             if (txId != null) {
-                String rootSpanId = generateSpanId();
-                SpanIdHolder.set(rootSpanId);
-                TcpSender.send(createRootEvent(txId, TraceEventType.HTTP_IN_START, TraceCategory.HTTP,
-                        method + " " + path, null, true, null, rootSpanId));
+                String spanId = generateSpanId();
+                SpanIdHolder.set(spanId);
+                TcpSender.send(buildEvent(txId, TraceEventType.HTTP_IN_START, TraceCategory.HTTP,
+                        method + " " + path, null, true, null, spanId, incomingSpanId));
             }
         });
     }
 
-    /**
-     * Called on normal return from DispatcherServlet.doDispatch().
-     * statusCode is read directly from the response object by injected bytecode.
-     *
-     * <p>Bytecode ABI: (Ljava/lang/String;Ljava/lang/String;IJ)V
-     */
     public static void onHttpInEnd(String method, String path, int statusCode, long durationMs) {
         safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;
-            String rootSpanId = SpanIdHolder.get();
-            if (rootSpanId == null) rootSpanId = generateSpanId();
+            String spanId = SpanIdHolder.get();
             boolean success = statusCode >= 200 && statusCode < 400;
             Map<String, Object> extra = new LinkedHashMap<>();
             extra.put("statusCode", statusCode);
-            if (!success) {
-                extra.put("errorType", statusCode >= 500 ? "ServerError" : "ClientError");
-                extra.put("errorMessage", "HTTP " + statusCode);
-            }
-            TcpSender.send(createRootEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
-                    method + " " + path, durationMs, success, extra, rootSpanId));
-            debugLog("[HTTP-IN] " + method + " " + path + " → " + statusCode + " (" + durationMs + "ms) txId=" + txId);
+            TcpSender.send(buildEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
+                    method + " " + path, durationMs, success, extra, spanId, null));
             TxIdHolder.clear();
             SpanIdHolder.clear();
         });
     }
 
-    /**
-     * Called when DispatcherServlet.doDispatch() exits via an uncaught exception.
-     * The throwable is captured by the injected bytecode (DUP before re-throw).
-     *
-     * <p>Bytecode ABI: (Ljava/lang/Throwable;Ljava/lang/String;Ljava/lang/String;J)V
-     */
     public static void onHttpInError(Throwable t, String method, String path, long durationMs) {
         safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;
-            String rootSpanId = SpanIdHolder.get();
-            if (rootSpanId == null) rootSpanId = generateSpanId();
+            String spanId = SpanIdHolder.get();
             Map<String, Object> extra = new LinkedHashMap<>();
-            extra.put("statusCode", -1);
             extra.put("errorType", t != null ? t.getClass().getSimpleName() : "UnknownError");
-            extra.put("errorMessage", t != null ? truncateMessage(t.getMessage()) : null);
-            TcpSender.send(createRootEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
-                    method + " " + path, durationMs, false, extra, rootSpanId));
-            debugLog("[HTTP-IN] " + method + " " + path + " → ERROR "
-                + (t != null ? t.getClass().getSimpleName() : "?")
-                + " (" + durationMs + "ms) txId=" + txId);
+            TcpSender.send(buildEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
+                    method + " " + path, durationMs, false, extra, spanId, null));
             TxIdHolder.clear();
             SpanIdHolder.clear();
-        });
-    }
-
-    /**
-     * Called when RestTemplate.doExecute() exits via exception.
-     * Status code is extracted via reflection from HttpStatusCodeException if available.
-     *
-     * <p>Bytecode ABI: (Ljava/lang/Throwable;Ljava/lang/String;Ljava/lang/String;J)V
-     */
-    public static void onHttpOutError(Throwable t, String method, String url, long durationMs) {
-        safeRun(() -> {
-            String txId = TxIdHolder.get();
-            if (txId == null) return;
-            int statusCode = -1;
-            if (t != null) {
-                try {
-                    ClassLoader cl = t.getClass().getClassLoader();
-                    if (cl == null) cl = ClassLoader.getSystemClassLoader();
-                    final ClassLoader resolvedCl = cl;
-                    java.lang.reflect.Method getStatusCode = WC_EXCEPTION_STATUS_METHOD_CACHE.computeIfAbsent(
-                        resolvedCl, loader -> {
-                            try { return t.getClass().getMethod("getStatusCode"); }
-                            catch (Throwable t2) { return null; }
-                        });
-                    if (getStatusCode != null) {
-                        Object status = getStatusCode.invoke(t);
-                        java.lang.reflect.Method valueMethod = HTTP_STATUS_VALUE_METHOD_CACHE.computeIfAbsent(
-                            resolvedCl, loader -> {
-                                try { return status.getClass().getMethod("value"); }
-                                catch (Throwable t2) { return null; }
-                            });
-                        if (valueMethod != null) statusCode = (int) valueMethod.invoke(status);
-                    }
-                } catch (Throwable ignored) {}
-            }
-            Map<String, Object> extra = new LinkedHashMap<>();
-            extra.put("method", method);
-            extra.put("statusCode", statusCode);
-            extra.put("errorType", t != null ? t.getClass().getSimpleName() : "UnknownError");
-            extra.put("errorMessage", t != null ? truncateMessage(t.getMessage()) : null);
-            TcpSender.send(createChildEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP, url, durationMs, false, extra));
-            debugLog("[HTTP-OUT] " + method + " " + url + " → ERROR " + statusCode + " "
-                + (t != null ? t.getClass().getSimpleName() : "?")
-                + " (" + durationMs + "ms)");
         });
     }
 
@@ -229,7 +138,17 @@ public class TraceRuntime {
             extra.put("method", method);
             TcpSender.send(createChildEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP, uri, durationMs,
                     statusCode >= 200 && statusCode < 400, extra));
-            debugLog("[HTTP-OUT] " + method + " " + uri + " → " + statusCode + " (" + durationMs + "ms)");
+        });
+    }
+
+    public static void onHttpOutError(Throwable t, String method, String url, long durationMs) {
+        safeRun(() -> {
+            String txId = TxIdHolder.get();
+            if (txId == null) return;
+            Map<String, Object> extra = new LinkedHashMap<>();
+            extra.put("method", method);
+            extra.put("errorType", t != null ? t.getClass().getSimpleName() : "UnknownError");
+            TcpSender.send(createChildEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP, url, durationMs, false, extra));
         });
     }
 
@@ -239,90 +158,39 @@ public class TraceRuntime {
             if (txId == null) return;
             Map<String, Object> extra = new HashMap<>();
             extra.put("brokerType", brokerType);
-            extra.put("topic", topic);
-            extra.put("key", key);
             TcpSender.send(createChildEvent(txId, TraceEventType.MQ_PRODUCE, TraceCategory.MQ, topic, null, true, extra));
-            debugLog("[MQ-PRODUCE] " + brokerType.toUpperCase()
-                + " topic=" + topic + (key != null ? " key=" + key : ""));
         });
     }
 
     public static void onMqConsumeStart(String brokerType, String topic, String incomingTxId) {
         safeRun(() -> {
-            String txId = incomingTxId;
-            if (txId != null && !txId.isEmpty()) {
-                TxIdHolder.set(txId);
-                debugLog("[MQ-CONSUME] Adopted incoming txId from MQ headers: " + txId);
-            } else {
-                // If already set (e.g. by MessagingMessageListenerAdapter), use it.
-                if (TxIdHolder.get() != null) {
-                    txId = TxIdHolder.get();
-                    debugLog("[MQ-CONSUME] Reusing existing txId from Adapter: " + txId);
-                } else {
-                    if (!TxIdGenerator.shouldSample()) {
-                        debugLog("[MQ-CONSUME] Not sampling this message.");
-                        return;
-                    }
-                    TxIdHolder.set(TxIdGenerator.generate());
-                    txId = TxIdHolder.get();
-                    debugLog("[MQ-CONSUME] Generated new txId (no upstream): " + txId);
-                }
+            if (incomingTxId != null && !incomingTxId.isEmpty()) TxIdHolder.set(incomingTxId);
+            else if (TxIdHolder.get() == null) {
+                if (!TxIdGenerator.shouldSample()) return;
+                TxIdHolder.set(TxIdGenerator.generate());
             }
-            String rootSpanId = generateSpanId();
-            SpanIdHolder.set(rootSpanId);
-            Map<String, Object> extra = new HashMap<>();
-            extra.put("brokerType", brokerType);
-            extra.put("topic", topic);
-            TcpSender.send(createRootEvent(txId, TraceEventType.MQ_CONSUME_START, TraceCategory.MQ,
-                    topic, null, true, extra, rootSpanId));
+            String txId = TxIdHolder.get();
+            String spanId = generateSpanId();
+            SpanIdHolder.set(spanId);
+            TcpSender.send(createRootEvent(txId, TraceEventType.MQ_CONSUME_START, TraceCategory.MQ, topic, null, true, null, spanId));
         });
     }
 
-    /**
-     * Called on normal return from a @KafkaListener method.
-     *
-     * <p>Bytecode ABI: (Ljava/lang/String;Ljava/lang/String;J)V
-     */
     public static void onMqConsumeEnd(String brokerType, String topic, long durationMs) {
         safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;
-            String rootSpanId = SpanIdHolder.get();
-            if (rootSpanId == null) rootSpanId = generateSpanId();
-            Map<String, Object> extra = new HashMap<>();
-            extra.put("brokerType", brokerType);
-            extra.put("topic", topic);
-            TcpSender.send(createRootEvent(txId, TraceEventType.MQ_CONSUME_END, TraceCategory.MQ,
-                    topic, durationMs, true, extra, rootSpanId));
-            debugLog("[MQ-CONSUME] " + brokerType.toUpperCase()
-                + " topic=" + topic + " END " + durationMs + "ms txId=" + txId);
+            TcpSender.send(createRootEvent(txId, TraceEventType.MQ_CONSUME_END, TraceCategory.MQ, topic, durationMs, true, null, SpanIdHolder.get()));
             TxIdHolder.clear();
             SpanIdHolder.clear();
         });
     }
 
-    /**
-     * Called when a @KafkaListener method exits via an uncaught exception.
-     *
-     * <p>Bytecode ABI: (Ljava/lang/Throwable;Ljava/lang/String;Ljava/lang/String;J)V
-     */
     public static void onMqConsumeError(Throwable t, String brokerType, String topic, long durationMs) {
         safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;
-            String rootSpanId = SpanIdHolder.get();
-            if (rootSpanId == null) rootSpanId = generateSpanId();
-            Map<String, Object> extra = new LinkedHashMap<>();
-            extra.put("brokerType", brokerType);
-            extra.put("topic", topic);
-            extra.put("errorType", t != null ? t.getClass().getSimpleName() : "UnknownError");
-            extra.put("errorMessage", t != null ? truncateMessage(t.getMessage()) : null);
-            TcpSender.send(createRootEvent(txId, TraceEventType.MQ_CONSUME_END, TraceCategory.MQ,
-                    topic, durationMs, false, extra, rootSpanId));
-            debugLog("[MQ-CONSUME] " + brokerType.toUpperCase()
-                + " topic=" + topic + " ERROR " + durationMs + "ms "
-                + (t != null ? t.getClass().getSimpleName() : "?")
-                + " txId=" + txId);
+            TcpSender.send(createRootEvent(txId, TraceEventType.MQ_CONSUME_END, TraceCategory.MQ, topic, durationMs, false, null, SpanIdHolder.get()));
             TxIdHolder.clear();
             SpanIdHolder.clear();
         });
@@ -330,68 +198,36 @@ public class TraceRuntime {
 
     public static void onDbQueryStart(String sql, String dbHost) {
         safeRun(() -> {
-            debugLog("[DB] START " + sqlPreview(sql));
             Map<String, Object> extra = new HashMap<>();
             extra.put("sql", truncate(sql));
             emit(TraceEventType.DB_QUERY_START, TraceCategory.DB, dbHost != null ? dbHost : "unknown-db", null, true, extra);
         });
     }
 
-    /**
-     * Called on normal return from a JDBC PreparedStatement execute method.
-     *
-     * <p>Bytecode ABI: (Ljava/lang/String;JLjava/lang/String;)V
-     *
-     * <p>NOTE: TxIdHolder is NOT cleared here.
-     * DB/Cache/IO events are sub-operations within an active transaction.
-     * The transaction entry points (onHttpInEnd / onMqConsumeEnd / onMqConsumeError)
-     * are responsible for calling TxIdHolder.clear() when the request completes.
-     */
     public static void onDbQueryEnd(String sql, long durationMs, String dbHost) {
         safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;
             Map<String, Object> extra = new HashMap<>();
             extra.put("sql", truncate(sql));
-            if (durationMs > AgentConfig.getSlowQueryMs()) {
-                extra.put("slowQuery", true);
-                AgentLogger.warn("[DB] SLOW " + durationMs + "ms — " + sqlPreview(sql));
-            } else {
-                debugLog("[DB] END " + durationMs + "ms — " + sqlPreview(sql));
-            }
-            String target = dbHost != null && !dbHost.isEmpty() ? dbHost : "unknown-db";
-            TcpSender.send(createChildEvent(txId, TraceEventType.DB_QUERY_END, TraceCategory.DB, target, durationMs, true, extra));
+            TcpSender.send(createChildEvent(txId, TraceEventType.DB_QUERY_END, TraceCategory.DB, dbHost, durationMs, true, extra));
         });
     }
 
-    /**
-     * Called when a JDBC PreparedStatement execute method exits via an uncaught exception.
-     *
-     * <p>Bytecode ABI: (Ljava/lang/Throwable;Ljava/lang/String;JLjava/lang/String;)V
-     */
     public static void onDbQueryError(Throwable t, String sql, long durationMs, String dbHost) {
         safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;
             Map<String, Object> extra = new LinkedHashMap<>();
             extra.put("sql", truncate(sql));
-            extra.put("errorType", t != null ? t.getClass().getSimpleName() : "UnknownError");
-            extra.put("errorMessage", t != null ? truncateMessage(t.getMessage()) : null);
-            debugLog("[DB] ERROR " + durationMs + "ms "
-                + (t != null ? t.getClass().getSimpleName() : "?")
-                + " — " + sqlPreview(sql));
-            String target = dbHost != null && !dbHost.isEmpty() ? dbHost : "unknown-db";
-            TcpSender.send(createChildEvent(txId, TraceEventType.DB_QUERY_END, TraceCategory.DB, target, durationMs, false, extra));
+            TcpSender.send(createChildEvent(txId, TraceEventType.DB_QUERY_END, TraceCategory.DB, dbHost, durationMs, false, extra));
         });
     }
 
-    // NOTE: TxIdHolder is NOT cleared here — see onDbQueryEnd for explanation.
     public static void onFileRead(String path, long sizeBytes, long durationMs, boolean success) {
         safeRun(() -> {
             String txId = TxIdHolder.get();
-            if (txId == null) return;
-            if (sizeBytes < AgentConfig.getMinSizeBytes()) return;
-            debugLog("[FILE] READ " + path + " " + sizeBytes + "B (" + durationMs + "ms)");
+            if (txId == null || sizeBytes < AgentConfig.getMinSizeBytes()) return;
             Map<String, Object> extra = new HashMap<>();
             extra.put("sizeBytes", sizeBytes);
             TcpSender.send(createChildEvent(txId, TraceEventType.FILE_READ, TraceCategory.IO, path, durationMs, success, extra));
@@ -401,329 +237,250 @@ public class TraceRuntime {
     public static void onFileWrite(String path, long sizeBytes, long durationMs, boolean success) {
         safeRun(() -> {
             String txId = TxIdHolder.get();
-            if (txId == null) return;
-            if (sizeBytes < AgentConfig.getMinSizeBytes()) return;
-            debugLog("[FILE] WRITE " + path + " " + sizeBytes + "B (" + durationMs + "ms)");
+            if (txId == null || sizeBytes < AgentConfig.getMinSizeBytes()) return;
             Map<String, Object> extra = new HashMap<>();
             extra.put("sizeBytes", sizeBytes);
             TcpSender.send(createChildEvent(txId, TraceEventType.FILE_WRITE, TraceCategory.IO, path, durationMs, success, extra));
         });
     }
 
-    // NOTE: TxIdHolder is NOT cleared here — see onDbQueryEnd for explanation.
     public static void onCacheGet(String key, boolean hit) {
-        safeRun(() -> {
-            debugLog("[CACHE] GET " + key + " → " + (hit ? "HIT" : "MISS"));
-            emit(hit ? TraceEventType.CACHE_HIT : TraceEventType.CACHE_MISS, TraceCategory.CACHE, key, null, true, null);
-        });
+        safeRun(() -> emit(hit ? TraceEventType.CACHE_HIT : TraceEventType.CACHE_MISS, TraceCategory.CACHE, key, null, true, null));
     }
 
     public static void onCacheSet(String key) {
-        safeRun(() -> {
-            debugLog("[CACHE] SET " + key);
-            emit(TraceEventType.CACHE_SET, TraceCategory.CACHE, key, null, true, null);
-        });
+        safeRun(() -> emit(TraceEventType.CACHE_SET, TraceCategory.CACHE, key, null, true, null));
     }
 
     public static void onCacheDel(String key) {
-        safeRun(() -> {
-            debugLog("[CACHE] DEL " + key);
-            emit(TraceEventType.CACHE_DEL, TraceCategory.CACHE, key, null, true, null);
-        });
+        safeRun(() -> emit(TraceEventType.CACHE_DEL, TraceCategory.CACHE, key, null, true, null));
     }
 
-    /**
-     * Lettuce RedisFuture&lt;V&gt;에 HIT/MISS 판단 콜백을 등록한다.
-     * RedisFuture&lt;V&gt;는 java.util.concurrent.CompletionStage&lt;V&gt;를 구현하므로
-     * Lettuce 직접 의존 없이 표준 JDK API로 콜백 등록 가능.
-     *
-     * <p>Bytecode ABI: (Ljava/lang/Object;Ljava/lang/String;)V
-     */
     public static void attachCacheGetListener(Object future, String key) {
-        safeRun(() -> {
-            ((java.util.concurrent.CompletionStage<?>) future).whenComplete((v, t) -> {
-                if (t == null) {
-                    onCacheGet(key, v != null); // v=null → MISS, v≠null → HIT
-                }
-            });
-        });
+        safeRun(() -> ((java.util.concurrent.CompletionStage<?>) future).whenComplete((v, t) -> { if (t == null) onCacheGet(key, v != null); }));
     }
 
-    /**
-     * Allows plugins to publish custom events without coupling to TraceRuntime internals.
-     */
-    public static void emitCustomEvent(TraceEventType type, TraceCategory category,
-                                       String target, Long durationMs, boolean success,
-                                       Map<String, Object> extra) {
+    public static void emitCustomEvent(TraceEventType type, TraceCategory category, String target, Long durationMs, boolean success, Map<String, Object> extra) {
         emit(type, category, target, durationMs, success, extra);
     }
 
-    /**
-     * Wraps a WebClient Mono to record HTTP_OUT on completion.
-     * Uses reflection to avoid a direct compile-time dependency on Reactor.
-     */
+    // -----------------------------------------------------------------------
+    // Async / Thread Support
+    // -----------------------------------------------------------------------
+
+    public static String onAsyncStart(String taskName) {
+        String txId = TxIdHolder.get();
+        if (txId == null) return null;
+        String spanId = generateSpanId();
+        TcpSender.send(buildEvent(txId, TraceEventType.ASYNC_START, TraceCategory.ASYNC, 
+                taskName, null, true, null, spanId, SpanIdHolder.get()));
+        SpanIdHolder.set(spanId);
+        return spanId;
+    }
+
+    public static void onAsyncEnd(String taskName, String spanId, long durationMs) {
+        String txId = TxIdHolder.get();
+        if (txId == null || spanId == null) return;
+        TcpSender.send(createRootEvent(txId, TraceEventType.ASYNC_END, TraceCategory.ASYNC, taskName, durationMs, true, null, spanId));
+    }
+
     public static Object wrapWebClientExchange(Object mono, String method, String uri) {
         try {
             String txId = TxIdHolder.get();
             if (txId == null) return mono;
-
-            try {
-                Class.forName("reactor.core.publisher.Mono");
-            } catch (ClassNotFoundException e) {
-                return mono;
-            }
-
-            long startTime = System.currentTimeMillis();
-            // Capture txId and spanId here on the calling thread; the Reactor scheduler may run
-            // the callbacks on a different thread where ThreadLocals are null.
-            final String capturedTxId   = txId;
+            final String capturedTxId = txId;
             final String capturedSpanId = SpanIdHolder.get();
+            long startTime = System.currentTimeMillis();
 
-            // doOnSuccess: extract status code via statusCode().value() reflection chain.
-            // IMPORTANT: look up methods on the PUBLIC INTERFACES (ClientResponse, HttpStatusCode),
-            // not on the concrete implementation classes (DefaultClientResponse, etc.).
-            // Java module strong encapsulation blocks reflection on non-exported packages even for
-            // public members; the public interface types are in exported packages and are safe.
             java.util.function.Consumer<Object> successConsumer = response -> {
-                try {
-                    long durationMs = System.currentTimeMillis() - startTime;
-                    ClassLoader cl = response.getClass().getClassLoader();
-                    if (cl == null) cl = ClassLoader.getSystemClassLoader();
-                    final ClassLoader resolvedCl = cl;
-                    java.lang.reflect.Method statusCodeMethod = HTTP_STATUS_CODE_METHOD_CACHE.computeIfAbsent(
-                        resolvedCl, loader -> {
-                            try {
-                                return Class.forName(
-                                    "org.springframework.web.reactive.function.client.ClientResponse", false, loader)
-                                    .getMethod("statusCode");
-                            } catch (Throwable t2) { return null; }
-                        });
-                    if (statusCodeMethod == null) throw new IllegalStateException("statusCode method not found");
-                    Object statusCodeObj = statusCodeMethod.invoke(response);
-                    java.lang.reflect.Method valueMethod = HTTP_STATUS_VALUE_METHOD_CACHE.computeIfAbsent(
-                        resolvedCl, loader -> {
-                            try {
-                                return Class.forName(
-                                    "org.springframework.http.HttpStatusCode", false, loader)
-                                    .getMethod("value");
-                            } catch (Throwable t2) { return null; }
-                        });
-                    if (valueMethod == null) throw new IllegalStateException("value method not found");
-                    int statusCode = (int) valueMethod.invoke(statusCodeObj);
-                    emitHttpOutWithSpan(capturedTxId, capturedSpanId, method, uri, statusCode, durationMs);
-                } catch (Throwable t) {
-                    emitHttpOutWithSpan(capturedTxId, capturedSpanId, method, uri, -1,
-                            System.currentTimeMillis() - startTime, t);
-                }
+                long durationMs = System.currentTimeMillis() - startTime;
+                int statusCode = extractStatusCode(response);
+                emitHttpOutWithSpan(capturedTxId, capturedSpanId, method, uri, statusCode, durationMs, null);
             };
-
-            // doOnError: emit HTTP_OUT error event with exception details
             java.util.function.Consumer<Throwable> errorConsumer = err -> {
                 long durationMs = System.currentTimeMillis() - startTime;
-                emitHttpOutErrorWithSpan(capturedTxId, capturedSpanId, err, method, uri, durationMs);
+                emitHttpOutWithSpan(capturedTxId, capturedSpanId, method, uri, -1, durationMs, err);
             };
 
-            java.lang.reflect.Method doOnSuccessMethod =
-                mono.getClass().getMethod("doOnSuccess", java.util.function.Consumer.class);
-            Object monoWithSuccess = doOnSuccessMethod.invoke(mono, successConsumer);
-
-            java.lang.reflect.Method doOnErrorMethod =
-                monoWithSuccess.getClass().getMethod("doOnError", java.util.function.Consumer.class);
-            return doOnErrorMethod.invoke(monoWithSuccess, errorConsumer);
-        } catch (Throwable t) {
-            return mono;
-        }
+            java.lang.reflect.Method doOnSuccess = mono.getClass().getMethod("doOnSuccess", java.util.function.Consumer.class);
+            Object m2 = doOnSuccess.invoke(mono, successConsumer);
+            java.lang.reflect.Method doOnError = m2.getClass().getMethod("doOnError", java.util.function.Consumer.class);
+            return doOnError.invoke(m2, errorConsumer);
+        } catch (Throwable t) { return mono; }
     }
 
-    // -----------------------------------------------------------------------
-    // Internal helpers
-    // -----------------------------------------------------------------------
-
-    /** Used by WebClient success callbacks that run on a Reactor thread (ThreadLocals unavailable). */
-    private static void emitHttpOutWithSpan(String txId, String parentSpanId,
-            String method, String uri, int statusCode, long durationMs) {
-        emitHttpOutWithSpan(txId, parentSpanId, method, uri, statusCode, durationMs, null);
+    private static int extractStatusCode(Object response) {
+        try {
+            ClassLoader cl = response.getClass().getClassLoader();
+            java.lang.reflect.Method scm = HTTP_STATUS_CODE_METHOD_CACHE.computeIfAbsent(cl, l -> {
+                try { return Class.forName("org.springframework.web.reactive.function.client.ClientResponse", false, l).getMethod("statusCode"); }
+                catch (Throwable t) { return null; }
+            });
+            Object scObj = scm.invoke(response);
+            java.lang.reflect.Method vm = HTTP_STATUS_VALUE_METHOD_CACHE.computeIfAbsent(cl, l -> {
+                try { return Class.forName("org.springframework.http.HttpStatusCode", false, l).getMethod("value"); }
+                catch (Throwable t) { return null; }
+            });
+            return (int) vm.invoke(scObj);
+        } catch (Throwable t) { return -1; }
     }
 
-    /**
-     * Variant that includes the cause when statusCode could not be determined (e.g. reflection
-     * failure reading the response status code). The cause fields help diagnose why -1 appears.
-     * Also synthesises errorType/errorMessage for non-2xx responses even when cause is null.
-     */
-    private static void emitHttpOutWithSpan(String txId, String parentSpanId,
-            String method, String uri, int statusCode, long durationMs, Throwable cause) {
+    private static void emitHttpOutWithSpan(String txId, String parentSpanId, String method, String uri, int statusCode, long durationMs, Throwable cause) {
         safeRun(() -> {
-            if (txId == null) return;
-            boolean success = statusCode >= 200 && statusCode < 400;
+            boolean success = statusCode >= 200 && statusCode < 400 && cause == null;
             Map<String, Object> extra = new LinkedHashMap<>();
             extra.put("method", method);
             extra.put("statusCode", statusCode);
-            if (cause != null) {
-                extra.put("errorType", cause.getClass().getSimpleName());
-                extra.put("errorMessage", truncateMessage(cause.getMessage()));
-            } else if (!success) {
-                extra.put("errorType", statusCode >= 500 ? "ServerError" : "ClientError");
-                extra.put("errorMessage", "HTTP " + statusCode);
-            }
-            TcpSender.send(buildEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP, uri, durationMs, success, extra,
-                    generateSpanId(), parentSpanId));
-            debugLog("[HTTP-OUT] " + method + " " + uri + " → " + statusCode + " (" + durationMs + "ms)");
+            if (cause != null) extra.put("errorType", cause.getClass().getSimpleName());
+            TcpSender.send(buildEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP, uri, durationMs, success, extra, generateSpanId(), parentSpanId));
         });
     }
 
-    /** Used by WebClient error callbacks that run on a Reactor thread. */
-    private static void emitHttpOutErrorWithSpan(String txId, String parentSpanId,
-            Throwable t, String method, String uri, long durationMs) {
-        safeRun(() -> {
-            if (txId == null) return;
-            // Try to extract the actual HTTP status code from WebClientResponseException.
-            // Use the public interface HttpStatusCode.value() to avoid JPMS access issues.
-            int statusCode = -1;
-            if (t != null) {
-                try {
-                    ClassLoader cl = t.getClass().getClassLoader();
-                    if (cl == null) cl = ClassLoader.getSystemClassLoader();
-                    final ClassLoader resolvedCl = cl;
-                    Class<?> webclientExClass = Class.forName(
-                        "org.springframework.web.reactive.function.client.WebClientResponseException", false, cl);
-                    if (webclientExClass.isInstance(t)) {
-                        java.lang.reflect.Method getStatusCode = WC_EXCEPTION_STATUS_METHOD_CACHE.computeIfAbsent(
-                            resolvedCl, loader -> {
-                                try {
-                                    return Class.forName(
-                                        "org.springframework.web.reactive.function.client.WebClientResponseException",
-                                        false, loader).getMethod("getStatusCode");
-                                } catch (Throwable t2) { return null; }
-                            });
-                        if (getStatusCode != null) {
-                            Object statusCodeObj = getStatusCode.invoke(t);
-                            java.lang.reflect.Method valueMethod = HTTP_STATUS_VALUE_METHOD_CACHE.computeIfAbsent(
-                                resolvedCl, loader -> {
-                                    try {
-                                        return Class.forName(
-                                            "org.springframework.http.HttpStatusCode", false, loader)
-                                            .getMethod("value");
-                                    } catch (Throwable t2) { return null; }
-                                });
-                            if (valueMethod != null) statusCode = (int) valueMethod.invoke(statusCodeObj);
-                        }
-                    }
-                } catch (Throwable ignored) {}
-            }
-            Map<String, Object> extra = new LinkedHashMap<>();
-            extra.put("method", method);
-            extra.put("statusCode", statusCode);
-            extra.put("errorType", t != null ? t.getClass().getSimpleName() : "UnknownError");
-            extra.put("errorMessage", t != null ? truncateMessage(t.getMessage()) : null);
-            TcpSender.send(buildEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP, uri, durationMs, false, extra,
-                    generateSpanId(), parentSpanId));
-            debugLog("[HTTP-OUT] " + method + " " + uri + " → ERROR " + statusCode + " "
-                + (t != null ? t.getClass().getSimpleName() : "?")
-                + " (" + durationMs + "ms)");
-        });
-    }
-
-    private static void emit(TraceEventType type, TraceCategory category, String target,
-                              Long durationMs, boolean success, Map<String, Object> extra) {
+    private static void emit(TraceEventType type, TraceCategory category, String target, Long durationMs, boolean success, Map<String, Object> extra) {
         safeRun(() -> {
             String txId = TxIdHolder.get();
-            if (txId == null) return;
-            TcpSender.send(createChildEvent(txId, type, category, target, durationMs, success, extra));
+            if (txId != null) TcpSender.send(createChildEvent(txId, type, category, target, durationMs, success, extra));
         });
     }
 
-    // -----------------------------------------------------------------------
-    // Span factory methods
-    // -----------------------------------------------------------------------
-
-    /**
-     * Creates a root-span event (HTTP_IN_START/END, MQ_CONSUME_START/END).
-     * parentSpanId is always null for root spans.
-     * The caller is responsible for providing the spanId (stored in SpanIdHolder).
-     */
-    private static TraceEvent createRootEvent(String txId, TraceEventType type, TraceCategory category,
-            String target, Long durationMs, boolean success, Map<String, Object> extra, String spanId) {
+    private static TraceEvent createRootEvent(String txId, TraceEventType type, TraceCategory category, String target, Long durationMs, boolean success, Map<String, Object> extra, String spanId) {
         return buildEvent(txId, type, category, target, durationMs, success, extra, spanId, null);
     }
 
-    /**
-     * Creates a child-span event (DB, Cache, IO, HTTP_OUT, MQ_PRODUCE).
-     * Generates a new unique spanId and sets parentSpanId = SpanIdHolder.get().
-     * If SpanIdHolder is null (no active root span), parentSpanId will be null.
-     */
-    private static TraceEvent createChildEvent(String txId, TraceEventType type, TraceCategory category,
-            String target, Long durationMs, boolean success, Map<String, Object> extra) {
-        return buildEvent(txId, type, category, target, durationMs, success, extra,
-                generateSpanId(), SpanIdHolder.get());
+    private static TraceEvent createChildEvent(String txId, TraceEventType type, TraceCategory category, String target, Long durationMs, boolean success, Map<String, Object> extra) {
+        return buildEvent(txId, type, category, target, durationMs, success, extra, generateSpanId(), SpanIdHolder.get());
     }
 
-    /**
-     * Common event builder. All span fields (spanId, parentSpanId) are explicit.
-     */
-    private static TraceEvent buildEvent(String txId, TraceEventType type, TraceCategory category,
-            String target, Long durationMs, boolean success, Map<String, Object> extra,
-            String spanId, String parentSpanId) {
-        long now = System.currentTimeMillis();
-        return new TraceEvent(
-            AgentConfig.getServerName() + "-" + EVENT_SEQ.incrementAndGet(),
-            txId, spanId, parentSpanId,
-            type, category,
-            AgentConfig.getServerName(), target,
-            durationMs, success, now,
-            extra != null ? extra : new HashMap<>()
-        );
+    private static TraceEvent buildEvent(String txId, TraceEventType type, TraceCategory category, String target, Long durationMs, boolean success, Map<String, Object> extra, String spanId, String parentSpanId) {
+        return new TraceEvent(AgentConfig.getServerName() + "-" + EVENT_SEQ.incrementAndGet(), txId, spanId, parentSpanId, type, category, AgentConfig.getServerName(), target, durationMs, success, System.currentTimeMillis(), extra != null ? extra : new HashMap<>());
     }
 
-    /** Generates a unique span ID: timestamp prefix + 8-char UUID fragment. */
-    private static String generateSpanId() {
-        long now = System.currentTimeMillis();
-        return now + "-" + java.util.UUID.randomUUID().toString().substring(0, 8);
-    }
-
-    private static void safeRun(Runnable runnable) {
-        try {
-            runnable.run();
-        } catch (Throwable t) {
-            AgentLogger.error("Error in agent runtime", t);
-        }
-    }
-
-    private static void debugLog(String message) {
-        AgentLogger.debug(message);
-    }
-
-    private static final int SQL_MAX_LENGTH = 1000;
-    private static final int MSG_MAX_LENGTH = 200;
-    private static final int SQL_PREVIEW_LENGTH = 80;
-
-    private static String truncate(String text) {
-        if (text == null || text.length() <= SQL_MAX_LENGTH) return text;
-        return text.substring(0, SQL_MAX_LENGTH) + "...";
-    }
-
-    private static String truncateMessage(String msg) {
-        if (msg == null || msg.length() <= MSG_MAX_LENGTH) return msg;
-        return msg.substring(0, MSG_MAX_LENGTH) + "...";
-    }
-
-    private static String sqlPreview(String sql) {
-        if (sql == null) return "null";
-        String trimmed = sql.trim();
-        return trimmed.length() <= SQL_PREVIEW_LENGTH
-            ? trimmed
-            : trimmed.substring(0, SQL_PREVIEW_LENGTH) + "...";
-    }
+    private static String generateSpanId() { return System.currentTimeMillis() + "-" + java.util.UUID.randomUUID().toString().substring(0, 8); }
 
     public static String safeKeyToString(Object key) {
         if (key == null) return null;
         if (key instanceof byte[]) {
             byte[] bytes = (byte[]) key;
-            try {
-                return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
-            } catch (Exception e) {
-                return "[bytes:" + bytes.length + "]";
-            }
+            try { return new String(bytes, java.nio.charset.StandardCharsets.UTF_8); }
+            catch (Exception e) { return "[bytes:" + bytes.length + "]"; }
         }
         return String.valueOf(key);
+    }
+
+    private static void safeRun(Runnable r) { try { r.run(); } catch (Throwable t) { AgentLogger.error("Runtime error", t); } }
+
+    private static String truncate(String s) { return (s == null || s.length() <= 1000) ? s : s.substring(0, 1000) + "..."; }
+
+    private static String truncateMessage(String s) { return (s == null || s.length() <= 200) ? s : s.substring(0, 200) + "..."; }
+
+    // -----------------------------------------------------------------------
+    // WebFlux (Reactor) support
+    // -----------------------------------------------------------------------
+
+    public static void onWebFluxHandleStart(Object exchange) {
+        safeRun(() -> {
+            ClassLoader cl = exchange.getClass().getClassLoader();
+            Object request = resolveAndInvoke(WF_GET_REQUEST_CACHE, cl, "org.springframework.web.server.ServerWebExchange", "getRequest", exchange);
+            if (request == null) return;
+
+            Object httpMethod = resolveAndInvoke(WF_REQ_METHOD_CACHE, cl, "org.springframework.http.server.reactive.ServerHttpRequest", "getMethod", request);
+            String method = "UNKNOWN";
+            try { method = String.valueOf(httpMethod.getClass().getMethod("name").invoke(httpMethod)); } catch (Throwable ignored) {}
+
+            Object uriObj = resolveAndInvoke(WF_REQ_URI_CACHE, cl, "org.springframework.http.server.reactive.ServerHttpRequest", "getURI", request);
+            String path = "/";
+            try { path = String.valueOf(uriObj.getClass().getMethod("getPath").invoke(uriObj)); } catch (Throwable ignored) {}
+
+            Object headers = resolveAndInvoke(WF_REQ_HEADERS_CACHE, cl, "org.springframework.http.server.reactive.ServerHttpRequest", "getHeaders", request);
+            String inTxId = null, inSpanId = null;
+            if (headers != null) {
+                try {
+                    java.lang.reflect.Method getFirst = headers.getClass().getMethod("getFirst", String.class);
+                    inTxId = (String) getFirst.invoke(headers, AgentConfig.getHeaderKey());
+                    inSpanId = (String) getFirst.invoke(headers, "X-Span-Id");
+                } catch (Throwable ignored) {}
+            }
+            onHttpInStart(method, path, inTxId, inSpanId, false);
+        });
+    }
+
+    public static Object wrapWebFluxHandle(Object mono, Object exchange, long startTimeMs) {
+        try {
+            String txId = TxIdHolder.get();
+            if (txId == null) return mono;
+            final String capturedTxId = txId;
+            final String capturedSpanId = SpanIdHolder.get();
+            ClassLoader cl = exchange.getClass().getClassLoader();
+
+            java.util.function.Consumer<Object> successConsumer = unused -> {
+                long durationMs = System.currentTimeMillis() - startTimeMs;
+                int status = extractWebFluxResponseStatus(exchange, cl);
+                emitWebFluxEnd(capturedTxId, capturedSpanId, exchange, cl, durationMs, status, null);
+            };
+            java.util.function.Consumer<Throwable> errorConsumer = t -> {
+                long durationMs = System.currentTimeMillis() - startTimeMs;
+                emitWebFluxEnd(capturedTxId, capturedSpanId, exchange, cl, durationMs, -1, t);
+            };
+
+            Object monoWithCtx = injectReactorContext(mono, capturedTxId, capturedSpanId, cl);
+            java.lang.reflect.Method doOnSuccess = monoWithCtx.getClass().getMethod("doOnSuccess", java.util.function.Consumer.class);
+            Object m2 = doOnSuccess.invoke(monoWithCtx, successConsumer);
+            java.lang.reflect.Method doOnError = m2.getClass().getMethod("doOnError", java.util.function.Consumer.class);
+            return doOnError.invoke(m2, errorConsumer);
+        } catch (Throwable t) { return mono; }
+    }
+
+    private static void emitWebFluxEnd(String txId, String spanId, Object exchange, ClassLoader cl, long durationMs, int status, Throwable t) {
+        safeRun(() -> {
+            String[] mp = extractWebFluxMethodPath(exchange, cl);
+            boolean success = status >= 200 && status < 400 && t == null;
+            Map<String, Object> extra = new LinkedHashMap<>();
+            extra.put("statusCode", status);
+            if (t != null) extra.put("errorType", t.getClass().getSimpleName());
+            TcpSender.send(buildEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP, mp[0] + " " + mp[mp.length > 1 ? 1 : 0], durationMs, success, extra, spanId, null));
+            TxIdHolder.clear();
+            SpanIdHolder.clear();
+        });
+    }
+
+    public static void onWebFluxHandleSyncError() {
+        TxIdHolder.clear();
+        SpanIdHolder.clear();
+    }
+
+    private static Object resolveAndInvoke(java.util.concurrent.ConcurrentHashMap<ClassLoader, java.lang.reflect.Method> cache, ClassLoader cl, String iface, String method, Object target) {
+        try {
+            java.lang.reflect.Method m = cache.computeIfAbsent(cl, l -> { try { return Class.forName(iface, false, l).getMethod(method); } catch (Throwable t) { return null; } });
+            return m != null ? m.invoke(target) : null;
+        } catch (Throwable t) { return null; }
+    }
+
+    private static String[] extractWebFluxMethodPath(Object exchange, ClassLoader cl) {
+        try {
+            Object req = resolveAndInvoke(WF_GET_REQUEST_CACHE, cl, "org.springframework.web.server.ServerWebExchange", "getRequest", exchange);
+            Object hm = resolveAndInvoke(WF_REQ_METHOD_CACHE, cl, "org.springframework.http.server.reactive.ServerHttpRequest", "getMethod", req);
+            String m = String.valueOf(hm.getClass().getMethod("name").invoke(hm));
+            Object uri = resolveAndInvoke(WF_REQ_URI_CACHE, cl, "org.springframework.http.server.reactive.ServerHttpRequest", "getURI", req);
+            String p = String.valueOf(uri.getClass().getMethod("getPath").invoke(uri));
+            return new String[]{m, p};
+        } catch (Throwable t) { return new String[]{"UNKNOWN", "/"}; }
+    }
+
+    private static int extractWebFluxResponseStatus(Object exchange, ClassLoader cl) {
+        try {
+            Object resp = resolveAndInvoke(WF_GET_RESPONSE_CACHE, cl, "org.springframework.web.server.ServerWebExchange", "getResponse", exchange);
+            Object sc = resolveAndInvoke(WF_RESP_STATUS_CACHE, cl, "org.springframework.http.server.reactive.ServerHttpResponse", "getStatusCode", resp);
+            java.lang.reflect.Method vm = HTTP_STATUS_VALUE_METHOD_CACHE.computeIfAbsent(cl, l -> { try { return Class.forName("org.springframework.http.HttpStatusCode", false, l).getMethod("value"); } catch (Throwable t) { return null; } });
+            return (int) vm.invoke(sc);
+        } catch (Throwable t) { return -1; }
+    }
+
+    private static Object injectReactorContext(Object mono, String txId, String spanId, ClassLoader cl) {
+        try {
+            Class<?> ctxClass = Class.forName("reactor.util.context.Context", false, cl);
+            java.lang.reflect.Method of = ctxClass.getMethod("of", Object.class, Object.class, Object.class, Object.class);
+            Object ctx = of.invoke(null, ReactorContextHolder.TX_ID_KEY, txId, ReactorContextHolder.SPAN_ID_KEY, spanId != null ? spanId : "");
+            return mono.getClass().getMethod("contextWrite", Class.forName("reactor.util.context.ContextView", false, cl)).invoke(mono, ctx);
+        } catch (Throwable t) { return mono; }
     }
 }

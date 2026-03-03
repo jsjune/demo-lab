@@ -3,3 +3,4 @@ org.example.agent.plugin.jdbc.JdbcPlugin
 org.example.agent.plugin.mq.KafkaPlugin
 org.example.agent.plugin.cache.RedisPlugin
 org.example.agent.plugin.fileio.FileIoPlugin
+org.example.agent.plugin.executor.ExecutorPlugin

@@ -1,5 +1,5 @@
 package org.example.common;
 
 public enum TraceCategory {
-    HTTP, MQ, DB, CACHE, IO
+    HTTP, DB, MQ, CACHE, IO, ASYNC
 }

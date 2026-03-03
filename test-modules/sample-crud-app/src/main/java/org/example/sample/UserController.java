@@ -10,6 +10,7 @@ import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 @Slf4j
 @RestController
@@ -21,10 +22,18 @@ public class UserController {
     private final RestTemplate restTemplate;
     private final RedisTemplate<String, Object> redisTemplate;
     private final KafkaTemplate<String, String> kafkaTemplate;
+    private final AsyncService asyncService;
 
     // -----------------------------------------------------------------------
     // Basic CRUD
     // -----------------------------------------------------------------------
+
+    @GetMapping("/async")
+    public CompletableFuture<Map<String, Object>> testAsync(@RequestParam(defaultValue = "test-async") String label) {
+        log.info("[SAMPLE APP] Triggering async tasks: {}", label);
+        asyncService.runAsyncTask(label);
+        return asyncService.runComplexAsync(label + "-complex");
+    }
 
     @GetMapping
     public List<User> getAll() {
@@ -110,6 +119,16 @@ public class UserController {
     public String callExternal() {
         log.info("[SAMPLE APP] Calling external (self)");
         return restTemplate.getForObject("http://localhost:8000/users", String.class);
+    }
+
+    /**
+     * Cross-service test: MVC (sample-crud-app) ??WebFlux (sample-webflux)
+     * Verifies that the agent propagates TxId via HTTP headers.
+     */
+    @GetMapping("/call-flux")
+    public String callFlux() {
+        log.info("[SAMPLE APP] Calling sample-webflux at port 8002");
+        return restTemplate.getForObject("http://localhost:8002/api/flux/test?label=from-mvc", String.class);
     }
 
     // -----------------------------------------------------------------------

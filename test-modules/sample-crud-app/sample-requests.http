@@ -1,107 +1,53 @@
-### Sample CRUD App API Tests
-@host = http://localhost:8000
+### Sample CRUD App (MVC) - Port 8000
+@mvcHost = http://localhost:8000
 
-# ============================================================
-# Basic CRUD
-# ============================================================
+### Sample WebFlux App - Port 8002
+@fluxHost = http://localhost:8002
 
-### 1. Create a user  →  DB_QUERY + MQ_PRODUCE
-POST {{host}}/users
+### 1. Phase 4: ThreadPool Context Propagation (MVC @Async)
+GET {{mvcHost}}/users/async?label=threadpool-test
+Accept: application/json
+
+### 2. Phase 3: Reactor Context Propagation (WebFlux)
+GET {{fluxHost}}/api/flux/test?label=webflux-test
+Accept: application/json
+
+### 3. Phase 3: Reactor Chain & Scheduler Switching
+GET {{fluxHost}}/api/flux/chain
+Accept: application/json
+
+### 4. Distributed Tracing: MVC -> WebFlux
+GET {{mvcHost}}/users/call-flux
+Accept: application/json
+
+### -----------------------------------------------------------------------
+### Basic CRUD Operations (MVC)
+### -----------------------------------------------------------------------
+
+### Create User (Triggers Kafka Produce)
+POST {{mvcHost}}/users
 Content-Type: application/json
 
 {
-  "name": "John Doe",
-  "email": "john@example.com"
-}
-
-###
-
-### 2. Create another user
-POST {{host}}/users
-Content-Type: application/json
-
-{
-  "name": "Jane Smith",
+  "name": "Jane Doe",
   "email": "jane@example.com"
 }
 
-###
+### Get All Users (Triggers DB Query)
+GET {{mvcHost}}/users
 
-### 3. Get all users  →  DB_QUERY
-GET {{host}}/users
+### Full Chain (HTTP -> DB -> Redis -> Kafka -> HTTP Out)
+GET {{mvcHost}}/users/chain
 
-###
+### Bulk Insert (Consecutive DB Queries)
+POST {{mvcHost}}/users/bulk?count=5
 
-### 4. Get user by ID  →  DB_QUERY
-GET {{host}}/users/1
+### -----------------------------------------------------------------------
+### Error Scenarios
+### -----------------------------------------------------------------------
 
-###
+### Local Error (Simulate 500)
+GET {{mvcHost}}/users/error?code=500
 
-### 5. Update user  →  DB_QUERY + CACHE_DEL + MQ_PRODUCE
-PUT {{host}}/users/1
-Content-Type: application/json
-
-{
-  "name": "John Updated",
-  "email": "john.updated@example.com"
-}
-
-###
-
-### 6. Delete user  →  DB_QUERY + CACHE_DEL + MQ_PRODUCE
-DELETE {{host}}/users/2
-
-# ============================================================
-# Cache (Redis)
-# ============================================================
-
-### 7. Cache MISS then HIT  →  CACHE_MISS + DB_QUERY + CACHE_SET / CACHE_HIT
-# Run twice: first call = MISS (DB lookup + cache write), second = HIT (cache only)
-GET {{host}}/users/cache/1
-
-# ============================================================
-# Kafka
-# ============================================================
-
-### 8. Send Kafka message  →  MQ_PRODUCE + MQ_CONSUME (async)
-POST {{host}}/users/message?msg=HelloTracing
-
-# ============================================================
-# HTTP out (RestTemplate)
-# ============================================================
-
-### 9. External HTTP call (self)  →  HTTP_OUT OK
-GET {{host}}/users/external
-
-### 10. Trigger outbound HTTP error  →  HTTP_OUT ERR (errorType + errorMessage)
-GET {{host}}/users/trigger-http-error
-
-# ============================================================
-# Trace scenario samples
-# ============================================================
-
-### 11. Full chain  →  HTTP_IN + DB_QUERY × 2 + CACHE_SET × N + MQ_PRODUCE + HTTP_OUT
-GET {{host}}/users/chain
-
-###
-
-### 12. Bulk insert (10 records)  →  DB_QUERY × 10 연속 span
-POST {{host}}/users/bulk?count=10
-
-###
-
-### 13. Bulk insert (50 records)  →  더 많은 DB span 확인
-POST {{host}}/users/bulk?count=50
-
-###
-
-### 14. Error simulation: 500  →  HTTP_IN ERR (응답은 정상 전달됨)
-GET {{host}}/users/error?code=500
-
-###
-
-### 15. Error simulation: 404  →  HTTP_IN ERR
-GET {{host}}/users/error?code=404
-
-### 16. Error
-GET {{host}}/error
+### Remote Error (HTTP Out Error)
+GET {{mvcHost}}/users/trigger-http-error
