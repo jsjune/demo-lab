@@ -2,11 +2,13 @@ package org.example.sample;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.List;
 import java.util.Map;
@@ -23,6 +25,7 @@ public class UserController {
     private final RedisTemplate<String, Object> redisTemplate;
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final AsyncService asyncService;
+    private final WebClient webClient;
 
     // -----------------------------------------------------------------------
     // Basic CRUD
@@ -32,7 +35,19 @@ public class UserController {
     public CompletableFuture<Map<String, Object>> testAsync(@RequestParam(defaultValue = "test-async") String label) {
         log.info("[SAMPLE APP] Triggering async tasks: {}", label);
         asyncService.runAsyncTask(label);
-        return asyncService.runComplexAsync(label + "-complex");
+        return webClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .scheme("http")
+                        .host("localhost")
+                        .port(8002)
+                        .path("/api/flux/test")
+                        .queryParam("label", label)
+                        .build())
+                .retrieve()
+                .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+                .doOnSubscribe(s -> log.info("[COMPLEX-ASYNC] Calling downstream via WebClient"))
+                .doOnSuccess(res -> log.info("[COMPLEX-ASYNC] Task completed. Downstream response size: {}", res == null ? 0 : res.size()))
+                .toFuture();
     }
 
     @GetMapping

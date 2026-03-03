@@ -4,32 +4,32 @@
 <section>
 
     <style>
-        /* Professional Gantt UI */
+        /* Professional APM Timeline UI */
         .gantt-outer-container {
-            background: #fff;
-            border: 1px solid var(--border-color);
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
             border-radius: 12px;
             overflow: hidden;
             margin-bottom: 2rem;
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
             box-sizing: border-box;
         }
         .gantt-header-sticky {
             display: flex;
             background: #f8fafc;
-            border-bottom: 2px solid var(--border-color);
-            height: 40px;
+            border-bottom: 2px solid #e2e8f0;
+            height: 44px;
             align-items: center;
             font-weight: 700;
             color: #475569;
-            font-size: 0.7rem;
+            font-size: 0.75rem;
             text-transform: uppercase;
             letter-spacing: 0.05em;
         }
         .col-label-header {
-            flex: 0 0 300px;
-            padding: 0 1.25rem;
-            border-right: 1px solid var(--border-color);
+            flex: 0 0 350px;
+            padding: 0 1.5rem;
+            border-right: 1px solid #e2e8f0;
             box-sizing: border-box;
         }
         .col-timeline-header {
@@ -39,38 +39,37 @@
         }
         .ruler-tick {
             position: absolute;
-            top: 12px;
+            top: 14px;
             transform: translateX(-50%);
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.65rem;
+            font-size: 0.7rem;
             color: #94a3b8;
         }
         .server-divider {
-            padding: 0.6rem 1.25rem;
+            padding: 0.75rem 1.5rem;
             background: #f1f5f9;
-            border-bottom: 1px solid var(--border-color);
-            border-top: 1px solid var(--border-color);
+            border-bottom: 1px solid #e2e8f0;
+            border-top: 1px solid #e2e8f0;
             display: flex;
             align-items: center;
             gap: 12px;
             font-weight: 800;
             color: #1e293b;
-            font-size: 0.75rem;
+            font-size: 0.8rem;
         }
         .server-divider:first-of-type { border-top: none; }
         .badge-svc {
-            background: var(--primary-color);
+            background: #3b82f6;
             color: #fff;
-            padding: 2px 10px;
+            padding: 2px 12px;
             border-radius: 6px;
-            font-size: 0.65rem;
-            box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
+            font-size: 0.7rem;
         }
         .gantt-row {
             display: flex;
-            height: 32px;
+            height: 36px;
             border-bottom: 1px solid #f1f5f9;
-            transition: background 0.15s;
+            transition: background 0.1s;
             box-sizing: border-box;
             align-items: stretch;
         }
@@ -78,18 +77,37 @@
         .gantt-row:last-child { border-bottom: none; }
 
         .cell-label {
-            flex: 0 0 300px;
-            padding: 0 1.25rem;
-            border-right: 1px solid var(--border-color);
+            flex: 0 0 350px;
+            padding: 0 1.5rem;
+            border-right: 1px solid #e2e8f0;
             display: flex;
             align-items: center;
             gap: 10px;
-            overflow: hidden;
+            position: relative;
             background: inherit;
             box-sizing: border-box;
+            overflow: hidden;
         }
+        /* Tree Lines */
+        .tree-connector {
+            position: absolute;
+            left: var(--line-x);
+            top: 0;
+            bottom: 0;
+            width: 1.5px;
+            background: #e2e8f0;
+        }
+        .tree-connector-horizontal {
+            position: absolute;
+            left: var(--line-x);
+            top: 50%;
+            width: 10px;
+            height: 1.5px;
+            background: #e2e8f0;
+        }
+
         .txt-op {
-            font-size: 0.75rem;
+            font-size: 0.8rem;
             font-weight: 600;
             color: #334155;
             white-space: nowrap;
@@ -99,27 +117,28 @@
         .cell-timeline {
             flex: 1;
             position: relative;
-            padding-right: 100px; /* Increased to 100px for label safety */
             background-image: linear-gradient(to right, #f1f5f9 1px, transparent 1px);
             background-size: 20% 100%;
             box-sizing: border-box;
         }
         .bar-item {
             position: absolute;
-            height: 14px;
+            height: 18px;
             top: 50%;
             transform: translateY(-50%);
             border-radius: 4px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
             cursor: pointer;
             z-index: 10;
-            min-width: 2px;
+            min-width: 3px;
             box-sizing: border-box;
+            transition: opacity 0.2s;
         }
+        .bar-item:hover { opacity: 0.85; }
         .marker-item {
             position: absolute;
-            width: 8px;
-            height: 8px;
+            width: 10px;
+            height: 10px;
             border-radius: 50%;
             top: 50%;
             transform: translate(-50%, -50%);
@@ -129,10 +148,10 @@
         }
         .lbl-dur {
             position: absolute;
-            left: calc(100% + 8px);
+            left: calc(100% + 10px);
             top: 50%;
             transform: translateY(-50%);
-            font-size: 0.65rem;
+            font-size: 0.7rem;
             font-weight: 800;
             color: #64748b;
             white-space: nowrap;
@@ -142,6 +161,7 @@
             height: 8px;
             border-radius: 50%;
             flex-shrink: 0;
+            z-index: 5;
         }
         .row-err-gantt { background: #fff1f2 !important; }
     </style>
@@ -171,7 +191,7 @@
         
         <div class="gantt-outer-container">
             <div class="gantt-header-sticky">
-                <div class="col-label-header">Operation Name</div>
+                <div class="col-label-header">Operation Hierarchy</div>
                 <div class="col-timeline-header" id="ganttRuler"></div>
             </div>
             <div id="ganttBody"></div>
@@ -238,19 +258,13 @@
         }
 
         document.addEventListener('DOMContentLoaded', function () {
-            // Update table times
-            document.querySelectorAll('.kst-time').forEach(el => {
-                el.textContent = formatKST(el.dataset.ts);
-            });
-
+            document.querySelectorAll('.kst-time').forEach(el => { el.textContent = formatKST(el.dataset.ts); });
             const raw = window.rawEvents || [];
             if (raw.length === 0) return;
 
-            // 1. Map every event 1:1 for the timeline
             const events = raw.map(e => {
                 const ts = Number(e.timestamp);
                 const dur = e.durationMs ? Number(e.durationMs) : 0;
-                // For Gantt display: if it's an END or has duration, show as a bar ending at timestamp
                 const isEnd = e.type.endsWith('_END') || e.type === 'HTTP_OUT';
                 const start = isEnd ? (ts - dur) : ts;
                 return { ...e, start, end: ts, dur };
@@ -258,7 +272,6 @@
 
             const minTime = Math.min(...events.map(e => e.start));
             const maxTime = Math.max(...events.map(e => e.end));
-            // Add a 5% buffer to ensure labels have breathing room
             const totalDuration = Math.max((maxTime - minTime) * 1.05, 1);
 
             document.getElementById('statServers').textContent = new Set(raw.map(e => e.serverName)).size;
@@ -270,13 +283,8 @@
         function renderGantt(events, minTime, totalDuration) {
             const container = document.getElementById('ganttBody');
             const ruler = document.getElementById('ganttRuler');
-            
-            if (isNaN(totalDuration)) {
-                document.getElementById('timelineMsg').textContent = "Data load error";
-                return;
-            }
+            if (isNaN(totalDuration)) return;
 
-            // Render Ruler
             let rulerHtml = "";
             for (let i = 0; i <= 5; i++) {
                 const left = (i / 5) * 100;
@@ -284,96 +292,95 @@
             }
             ruler.innerHTML = rulerHtml;
 
-            // Group by Server
-            const serverOrder = [];
-            const groups = {};
+            const spanMap = {};
             events.forEach(e => {
-                if (!groups[e.serverName]) {
-                    groups[e.serverName] = [];
-                    serverOrder.push(e.serverName);
+                if (e.spanId) {
+                    if (!spanMap[e.spanId]) spanMap[e.spanId] = [];
+                    spanMap[e.spanId].push(e);
                 }
-                groups[e.serverName].push(e);
             });
 
-            const catColors = { 'HTTP': '#2563eb', 'DB': '#059669', 'CACHE': '#d97706', 'MQ': '#7c3aed' };
+            const childrenMap = {};
+            const rootSpans = [];
+            Object.keys(spanMap).forEach(spanId => {
+                const parentId = spanMap[spanId][0].parentSpanId;
+                if (!parentId || !spanMap[parentId]) rootSpans.push(spanId);
+                else {
+                    if (!childrenMap[parentId]) childrenMap[parentId] = [];
+                    if (!childrenMap[parentId].includes(spanId)) childrenMap[parentId].push(spanId);
+                }
+            });
+
+            const sortByTime = (a, b) => spanMap[a][0].timestamp - spanMap[b][0].timestamp;
+            rootSpans.sort(sortByTime);
+            Object.keys(childrenMap).forEach(pid => childrenMap[pid].sort(sortByTime));
+
+            const orderedList = [];
+            const visitedSpans = new Set();
+            function traverse(spanId, depth) {
+                if (visitedSpans.has(spanId)) return;
+                visitedSpans.add(spanId);
+                const evs = spanMap[spanId].sort((a, b) => a.timestamp - b.timestamp);
+                const startEv = evs.find(e => e.type.endsWith('_START')) || evs[0];
+                startEv.depth = depth; orderedList.push(startEv);
+                evs.forEach(e => { if (e !== startEv && !e.type.endsWith('_END')) { e.depth = depth; orderedList.push(e); } });
+                const children = childrenMap[spanId] || [];
+                children.forEach(childId => traverse(childId, depth + 1));
+                const endEv = evs.find(e => e.type.endsWith('_END'));
+                if (endEv && endEv !== startEv) { endEv.depth = depth; orderedList.push(endEv); }
+            }
+            rootSpans.forEach(rootId => traverse(rootId, 0));
+
+            const catColors = { 'HTTP': '#0ea5e9', 'DB': '#10b981', 'CACHE': '#f59e0b', 'MQ': '#8b5cf6', 'ASYNC': '#ec4899', 'IO': '#64748b' };
+            const errorColor = '#ef4444';
 
             let html = "";
-            serverOrder.forEach(server => {
-                const svEvents = groups[server];
+            let lastServer = null;
+            orderedList.forEach(e => {
+                if (e.serverName !== lastServer) {
+                    html += `<div class="server-divider" style="padding-left:${1.5 + (e.depth * 1.5)}rem;"><span class="badge-svc">${e.serverName}</span></div>`;
+                    lastServer = e.serverName;
+                }
+                const left = ((e.start - minTime) / totalDuration) * 100;
+                const width = e.dur > 0 ? Math.max((e.dur / totalDuration) * 100, 0.3) : 0;
+                const color = e.success ? (catColors[e.category] || '#94a3b8') : errorColor;
+                const timeStr = formatKST(e.timestamp);
                 
-                // Stack-based indentation for logical nesting (Start...End)
-                const stack = [];
-                svEvents.forEach((e) => {
-                    const isStart = e.type.endsWith('_START');
-                    const isEnd = e.type.endsWith('_END');
-
-                    if (isEnd && stack.length > 0) stack.pop();
-                    e.depth = stack.length;
-                    if (isStart) stack.push(e.type);
-                });
-
-                html += `<div class="server-divider"><span class="badge-svc">${server}</span> <span style="opacity:0.6; font-weight:normal;">${svEvents.length} events</span></div>`;
-
-                svEvents.forEach(e => {
-                    const left = ((e.start - minTime) / totalDuration) * 100;
-                    const width = e.dur > 0 ? Math.max((e.dur / totalDuration) * 100, 0.3) : 0;
-                    const color = catColors[e.category] || '#64748b';
-                    const indent = e.depth * 16;
-                    const timeStr = formatKST(e.timestamp);
-                    
-                    html += `
-                    <div class="gantt-row ${e.success ? '' : 'row-err-gantt'}">
-                        <div class="cell-label">
-                            <div style="width:${indent}px; flex-shrink:0;"></div>
-                            <div class="dot-cat" style="background-color:${color}"></div>
-                            <div class="txt-op" title="${e.type}">${e.type}</div>
-                        </div>
-                        <div class="cell-timeline">
-                            ${e.dur > 0 ? `
-                                <div class="bar-item"
-                                     style="left:${left}%; width:${width}%; background-color:${color}"
-                                     onmouseover="showTooltip(event, '${e.type}', '${e.target}', ${e.dur}, ${e.success}, '${timeStr}', '${e.spanId || ''}')"
-                                     onmouseout="hideTooltip()">
-                                     <span class="lbl-dur">${e.dur}ms</span>
-                                </div>
-                            ` : `
-                                <div class="marker-item" style="left:${left}%; background-color:${color}"
-                                     onmouseover="showTooltip(event, '${e.type}', '${e.target}', 0, ${e.success}, '${timeStr}', '${e.spanId || ''}')"
-                                     onmouseout="hideTooltip()">
-                                </div>
-                            `}
-                        </div>
-                    </div>`;
-                });
+                html += `
+                <div class="gantt-row ${e.success ? '' : 'row-err-gantt'}">
+                    <div class="cell-label" style="padding-left: ${1.5 + (e.depth * 1.5)}rem;">
+                        ${e.depth > 0 ? `<div class="tree-connector" style="--line-x: ${1.5 + ((e.depth-1) * 1.5) + 0.25}rem;"></div>` : ''}
+                        ${e.depth > 0 ? `<div class="tree-connector-horizontal" style="--line-x: ${1.5 + ((e.depth-1) * 1.5) + 0.25}rem;"></div>` : ''}
+                        <div class="dot-cat" style="background-color:${color}"></div>
+                        <div class="txt-op" title="${e.type}" style="color:${e.success ? '' : errorColor}">${e.type}</div>
+                    </div>
+                    <div class="cell-timeline">
+                        ${e.dur > 0 ? `
+                            <div class="bar-item" style="left:${left}%; width:${width}%; background-color:${color}"
+                                 onmouseover="showTooltip(event, '${e.type}', '${e.target.replace(/'/g, "\\'")}', ${e.dur}, ${e.success}, '${timeStr}', '${e.spanId || ''}')"
+                                 onmouseout="hideTooltip()">
+                                 <span class="lbl-dur" style="color:${e.success ? '' : errorColor}">${e.dur}ms</span>
+                            </div>
+                        ` : `
+                            <div class="marker-item" style="left:${left}%; background-color:${color}"
+                                 onmouseover="showTooltip(event, '${e.type}', '${e.target.replace(/'/g, "\\'")}', 0, ${e.success}, '${timeStr}', '${e.spanId || ''}')"
+                                 onmouseout="hideTooltip()">
+                            </div>
+                        `}
+                    </div>
+                </div>`;
             });
             container.innerHTML = html;
-            document.getElementById('timelineMsg').textContent = `${events.length} events mapped`;
+            document.getElementById('timelineMsg').textContent = `${events.length} events organized`;
         }
 
         const tooltip = document.getElementById('spanTooltip');
         function showTooltip(e, type, target, dur, success, timeStr, spanId) {
-            const spanIdHtml = spanId ? `<div style="font-size:0.6rem; color:#94a3b8; font-family:monospace; margin-top:4px;">span: ${spanId}</div>` : '';
-            tooltip.innerHTML = `
-                <div style="margin-bottom:4px; font-size:0.65rem; color:#94a3b8; font-family:monospace;">${timeStr} (KST)</div>
-                <strong>${type}</strong>
-                <div style="font-size:0.7rem; color:#cbd5e1; margin-top:4px; max-width:300px; overflow-wrap:break-word;">${target}</div>
-                <div style="margin-top:4px; font-weight:800; color:${success?'#4ade80':'#fb7185'}">${success?'✅ OK':'❌ ERR'} | ${dur}ms</div>
-                ${spanIdHtml}`;
-            tooltip.style.display = 'block';
-            tooltip.style.left = (e.pageX + 15) + 'px';
-            tooltip.style.top = (e.pageY + 15) + 'px';
+            tooltip.innerHTML = `<div style="font-size:0.65rem; color:#94a3b8; font-family:monospace;">${timeStr} (KST)</div><strong>${type}</strong><div style="font-size:0.7rem; color:#cbd5e1; margin-top:4px; max-width:300px; overflow-wrap:break-word;">${target}</div><div style="margin-top:4px; font-weight:800; color:${success?'#4ade80':'#ef4444'}">${success?'✅ OK':'❌ ERR'} | ${dur}ms</div><div style="font-size:0.6rem; color:#94a3b8; font-family:monospace; margin-top:4px;">span: ${spanId}</div>`;
+            tooltip.style.display = 'block'; tooltip.style.left = (e.pageX + 15) + 'px'; tooltip.style.top = (e.pageY + 15) + 'px';
         }
         function hideTooltip() { tooltip.style.display = 'none'; }
-
-        document.addEventListener('click', function (e) {
-            if (!e.target.classList.contains('btn-extra')) return;
-            const idx = e.target.dataset.idx;
-            const row = document.getElementById('extra-' + idx);
-            if (!row) return;
-            const hidden = row.style.display === 'none';
-            row.style.display = hidden ? 'table-row' : 'none';
-            e.target.textContent = hidden ? '−' : '+';
-        });
+        document.addEventListener('click', e => { if (!e.target.classList.contains('btn-extra')) return; const row = document.getElementById('extra-' + e.target.dataset.idx); const hidden = row.style.display === 'none'; row.style.display = hidden ? 'table-row' : 'none'; e.target.textContent = hidden ? '−' : '+'; });
     </script>
 </section>
 </body>

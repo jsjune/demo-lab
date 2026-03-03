@@ -29,26 +29,4 @@ public class AsyncService {
         log.info("[ASYNC-TEST] Found {} users in background thread", all.size());
     }
 
-    /**
-     * supplyAsync + WebClient: Returns Map<String, Object>
-     */
-    @Async
-    public CompletableFuture<Map<String, Object>> runComplexAsync(String label) {
-        log.info("[COMPLEX-ASYNC] Start complex task: {}", label);
-
-        return CompletableFuture.supplyAsync(() -> {
-            log.info("[COMPLEX-ASYNC] Inside supplyAsync, calling WebClient");
-            
-            // Fetch as Map from downstream WebFlux service
-            return webClient.get()
-                .uri("http://localhost:8002/api/flux/test?label=" + label)
-                .retrieve()
-                .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
-                .toFuture()
-                .join();
-        }).thenApply(res -> {
-            log.info("[COMPLEX-ASYNC] Task completed. Downstream response size: {}", res.size());
-            return res;
-        });
-    }
 }
