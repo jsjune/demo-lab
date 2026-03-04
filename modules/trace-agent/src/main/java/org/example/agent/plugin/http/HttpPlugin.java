@@ -4,6 +4,8 @@ import org.example.agent.TracerPlugin;
 import org.example.agent.config.AgentConfig;
 import org.example.agent.core.AgentLogger;
 import org.example.agent.core.TxIdHolder;
+import org.example.agent.core.SpanIdHolder;
+import org.example.agent.core.TraceRuntime;
 import org.example.agent.plugin.BaseAdvice;
 import org.example.agent.plugin.ReflectionUtils;
 import org.objectweb.asm.*;
@@ -24,6 +26,7 @@ public class HttpPlugin implements TracerPlugin {
     );
 
     @Override public String pluginId() { return "http"; }
+    @Override public boolean requiresBootstrapSearch() { return true; }
 
     @Override
     public List<String> targetClassPrefixes() {
@@ -36,8 +39,48 @@ public class HttpPlugin implements TracerPlugin {
             new DispatcherServletTransformer(),
             new DispatcherHandlerTransformer(),
             new RestTemplateTransformer(),
-            new WebClientTransformer()
+            new WebClientTransformer(),
+            new HttpServletRequestTransformer()
         );
+    }
+
+    static class HttpServletRequestTransformer implements ClassFileTransformer {
+        @Override
+        public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classfileBuffer) {
+            String normalized = className == null ? "" : className.replace('.', '/');
+            // Check for common servlet request implementations
+            if (!normalized.contains("Request") && !normalized.contains("request")) return null;
+            
+            try {
+                ClassReader reader = new ClassReader(classfileBuffer);
+                ClassWriter writer = new SafeClassWriter(reader, loader);
+                reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+                    @Override
+                    public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                        MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+                        if ("startAsync".equals(name)) {
+                            return new StartAsyncAdvice(mv, access, name, descriptor);
+                        }
+                        return mv;
+                    }
+                }, ClassReader.EXPAND_FRAMES);
+                return writer.toByteArray();
+            } catch (Exception e) { return null; }
+        }
+    }
+
+    static class StartAsyncAdvice extends BaseAdvice {
+        protected StartAsyncAdvice(MethodVisitor mv, int access, String name, String descriptor) {
+            super(Opcodes.ASM9, mv, access, name, descriptor);
+        }
+        @Override
+        protected void onMethodExit(int opcode) {
+            if (opcode != ATHROW) {
+                mv.visitVarInsn(ALOAD, 0); // this (request)
+                // We don't have method/path here easily, but we can restore them from attributes in TraceRuntime
+                mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "registerAsyncListenerFromRequest", "(Ljava/lang/Object;)V", false);
+            }
+        }
     }
 
     static class SafeClassWriter extends ClassWriter {
@@ -76,8 +119,7 @@ public class HttpPlugin implements TracerPlugin {
                     public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
                         MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
                         if ("doDispatch".equals(name) && descriptor.contains("HttpServletRequest")) {
-                            boolean isJakarta = AgentConfig.getServletPackage().startsWith("jakarta") || descriptor.contains("jakarta");
-                            return new DispatcherServletAdvice(mv, access, name, descriptor, isJakarta);
+                            return new DispatcherServletAdvice(mv, access, name, descriptor, AgentConfig.getServletPackage().startsWith("jakarta") || descriptor.contains("jakarta"));
                         }
                         return mv;
                     }
@@ -107,26 +149,44 @@ public class HttpPlugin implements TracerPlugin {
             if (ignored) return;
             captureStartTime();
             String pkg = isJakarta ? "jakarta/servlet/http/HttpServletRequest" : "javax/servlet/http/HttpServletRequest";
+            
             isTrackedId = newLocal(Type.BOOLEAN_TYPE);
-            int forceTraceId = newLocal(Type.BOOLEAN_TYPE);
-            mv.visitVarInsn(ALOAD, 1);
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "shouldSkipTracking", "(Ljava/lang/Object;)Z", false);
-            mv.visitInsn(ICONST_1);
-            mv.visitInsn(IXOR);
+            mv.visitInsn(ICONST_1); // Default to tracked
             mv.visitVarInsn(ISTORE, isTrackedId);
 
-            Label skip = new Label();
-            mv.visitVarInsn(ILOAD, isTrackedId);
-            mv.visitJumpInsn(IFEQ, skip);
+            Label primaryStart = new Label();
+            Label end = new Label();
 
+            // Check if this is a secondary dispatch (ASYNC resume or ERROR)
+            mv.visitVarInsn(ALOAD, 1); 
+            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "isSecondaryDispatch", "(Ljava/lang/Object;)Z", false);
+            mv.visitJumpInsn(IFEQ, primaryStart);
+
+            // Secondary Dispatch Path: Restore txId/spanId from attributes so we can record HTTP_IN_END later
+            mv.visitVarInsn(ALOAD, 1);
+            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "restoreContext", "(Ljava/lang/Object;)V", false);
+            
+            // Check if we actually restored anything. If not, don't track this orphaned resume.
+            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TxIdHolder", "get", "()Ljava/lang/String;", false);
+            Label hasCtx = new Label();
+            mv.visitJumpInsn(IFNONNULL, hasCtx);
+            mv.visitInsn(ICONST_0);
+            mv.visitVarInsn(ISTORE, isTrackedId);
+            mv.visitLabel(hasCtx);
+            mv.visitJumpInsn(GOTO, end);
+
+            // Primary Dispatch Path: Start new trace
+            mv.visitLabel(primaryStart);
             mv.visitVarInsn(ALOAD, 1);
             mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/config/AgentConfig", "getForceSampleHeader", "()Ljava/lang/String;", false);
             mv.visitMethodInsn(INVOKEINTERFACE, pkg, "getHeader", "(Ljava/lang/String;)Ljava/lang/String;", true);
             mv.visitLdcInsn("true");
             mv.visitInsn(SWAP);
             mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/String", "equalsIgnoreCase", "(Ljava/lang/String;)Z", false);
+            int forceTraceId = newLocal(Type.BOOLEAN_TYPE);
             mv.visitVarInsn(ISTORE, forceTraceId);
 
+            mv.visitVarInsn(ALOAD, 1); // request
             mv.visitVarInsn(ALOAD, 1);
             mv.visitMethodInsn(INVOKEINTERFACE, pkg, "getMethod", "()Ljava/lang/String;", true);
             mv.visitVarInsn(ALOAD, 1);
@@ -138,8 +198,9 @@ public class HttpPlugin implements TracerPlugin {
             mv.visitLdcInsn("X-Span-Id");
             mv.visitMethodInsn(INVOKEINTERFACE, pkg, "getHeader", "(Ljava/lang/String;)Ljava/lang/String;", true);
             mv.visitVarInsn(ILOAD, forceTraceId);
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onHttpInStart", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Z)V", false);
-            mv.visitLabel(skip);
+            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onHttpInStart", "(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Z)V", false);
+
+            mv.visitLabel(end);
         }
 
         @Override
@@ -148,8 +209,10 @@ public class HttpPlugin implements TracerPlugin {
             Label skip = new Label();
             mv.visitVarInsn(ILOAD, isTrackedId);
             mv.visitJumpInsn(IFEQ, skip);
+
             String requestPkg  = isJakarta ? "jakarta/servlet/http/HttpServletRequest"  : "javax/servlet/http/HttpServletRequest";
             String responsePkg = isJakarta ? "jakarta/servlet/http/HttpServletResponse" : "javax/servlet/http/HttpServletResponse";
+            
             if (opcode == ATHROW) {
                 mv.visitInsn(DUP);
                 mv.visitVarInsn(ALOAD, 1);
@@ -160,6 +223,12 @@ public class HttpPlugin implements TracerPlugin {
                 mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onHttpInError", "(Ljava/lang/Throwable;Ljava/lang/String;Ljava/lang/String;J)V", false);
             } else {
                 mv.visitVarInsn(ALOAD, 1);
+                mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/plugin/http/HttpPlugin", "isAsyncStarted", "(Ljava/lang/Object;)Z", false);
+                Label asyncActive = new Label();
+                mv.visitJumpInsn(IFNE, asyncActive);
+
+                // Normal Completion or Resume Completion (isAsyncStarted is false on resume exit)
+                mv.visitVarInsn(ALOAD, 1);
                 mv.visitMethodInsn(INVOKEINTERFACE, requestPkg, "getMethod", "()Ljava/lang/String;", true);
                 mv.visitVarInsn(ALOAD, 1);
                 mv.visitMethodInsn(INVOKEINTERFACE, requestPkg, "getRequestURI", "()Ljava/lang/String;", true);
@@ -167,6 +236,18 @@ public class HttpPlugin implements TracerPlugin {
                 mv.visitMethodInsn(INVOKEINTERFACE, responsePkg, "getStatus", "()I", true);
                 calculateDurationAndPush();
                 mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onHttpInEnd", "(Ljava/lang/String;Ljava/lang/String;IJ)V", false);
+                mv.visitJumpInsn(GOTO, skip);
+
+                mv.visitLabel(asyncActive);
+                // Async processing is active: Register listener to record END later
+                mv.visitVarInsn(ALOAD, 1); // request
+                mv.visitVarInsn(ALOAD, 1); mv.visitMethodInsn(INVOKEINTERFACE, requestPkg, "getMethod", "()Ljava/lang/String;", true);
+                mv.visitVarInsn(ALOAD, 1); mv.visitMethodInsn(INVOKEINTERFACE, requestPkg, "getRequestURI", "()Ljava/lang/String;", true);
+                mv.visitVarInsn(LLOAD, startTimeId);
+                mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "registerAsyncListener", "(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/String;J)V", false);
+
+                mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TxIdHolder", "clear", "()V", false);
+                mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/SpanIdHolder", "clear", "()V", false);
             }
             mv.visitLabel(skip);
         }
@@ -305,7 +386,7 @@ public class HttpPlugin implements TracerPlugin {
         }
         @Override
         protected void onMethodEnter() {
-            mv.visitVarInsn(ALOAD, 1);
+            mv.visitVarInsn(ALOAD, 1); // ClientRequest
             mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TxIdHolder", "get", "()Ljava/lang/String;", false);
             mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/SpanIdHolder", "get", "()Ljava/lang/String;", false);
             mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/plugin/http/HttpPlugin", "rebuildClientRequestWithHeaders", "(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/Object;", false);
@@ -337,22 +418,23 @@ public class HttpPlugin implements TracerPlugin {
     public static Object rebuildClientRequestWithHeaders(Object request, String txId, String spanId) {
         if (txId == null || request == null) return request;
         try {
+            AgentLogger.debug("[HTTP] WebClient: Header Propagation (txId=" + txId + ")");
             ClassLoader cl = request.getClass().getClassLoader();
             Class<?> crClass = Class.forName("org.springframework.web.reactive.function.client.ClientRequest", false, cl);
             java.lang.reflect.Method from = crClass.getMethod("from", crClass);
             Object builder = from.invoke(null, request);
-            
-            // Fix: Use the interface for getMethod to ensure visibility, and handle varargs correctly
             Class<?> builderClass = Class.forName("org.springframework.web.reactive.function.client.ClientRequest$Builder", false, cl);
             java.lang.reflect.Method headerMethod = builderClass.getMethod("header", String.class, String[].class);
-            
             headerMethod.invoke(builder, AgentConfig.getHeaderKey(), new String[]{txId});
             if (spanId != null) headerMethod.invoke(builder, "X-Span-Id", new String[]{spanId});
-            
             return builderClass.getMethod("build").invoke(builder);
-        } catch (Throwable t) {
-            AgentLogger.error("Failed to rebuild WebClient ClientRequest", t);
-            return request;
-        }
+        } catch (Throwable t) { return request; }
+    }
+
+    public static boolean isAsyncStarted(Object request) {
+        if (request == null) return false;
+        try {
+            return Boolean.TRUE.equals(TraceRuntime.invokeMethodSimple(request, "isAsyncStarted"));
+        } catch (Throwable t) { return false; }
     }
 }

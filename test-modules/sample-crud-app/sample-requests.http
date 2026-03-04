@@ -4,6 +4,10 @@
 ### Sample WebFlux App - Port 8002
 @fluxHost = http://localhost:8002
 
+### 0. test
+GET {{mvcHost}}/mvc/test
+Accept: application/json
+
 ### 1. Phase 4: ThreadPool Context Propagation (MVC @Async)
 GET {{mvcHost}}/users/async?label=threadpool-test
 Accept: application/json

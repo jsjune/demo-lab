@@ -123,6 +123,10 @@
                                   th:text="${trace.txId}"
                                   th:title="${trace.txId}"></span>
                             <button class="btn-copy" th:attr="data-txid=${trace.txId}">copy</button>
+                            <span th:if="${trace.extraInfo.eventCount > 1}" 
+                                  class="group-badge" 
+                                  th:text="'+' + (${trace.extraInfo.eventCount} - 1)"
+                                  th:title="'Click Detail to see all ' + ${trace.extraInfo.eventCount} + ' events'"></span>
                         </div>
                     </td>
                     <td th:text="${trace.serverName}"></td>
@@ -192,54 +196,6 @@
             const el = document.getElementById(map[val]);
             if (el) el.classList.add('active');
             applyFilters();
-        }
-
-        // ── TX ID grouping (same TX ID → collapsed by default, click to toggle) ──
-        function groupByTxId() {
-            const rows = Array.from(document.querySelectorAll('#traceTable tbody tr[data-txid]'));
-            const groups = new Map();   // txId → [rows]
-
-            rows.forEach(row => {
-                const id = row.dataset.txid;
-                if (!groups.has(id)) groups.set(id, []);
-                groups.get(id).push(row);
-            });
-
-            groups.forEach((group, txId) => {
-                if (group.length <= 1) return;
-
-                // Mark child rows as group-hidden
-                group.slice(1).forEach(r => { r.dataset.groupHidden = 'true'; });
-
-                // Add toggle badge to the first row's TX ID cell
-                const headerRow = group[0];
-                const txIdCell  = headerRow.querySelector('.tx-id-cell');
-                if (!txIdCell) return;
-
-                const badge = document.createElement('span');
-                badge.className    = 'group-badge';
-                badge.textContent  = '+' + (group.length - 1);
-                txIdCell.appendChild(badge);
-
-                const toggleGroup = (e) => {
-                    e.stopPropagation();
-                    const children = group.slice(1);
-                    const isCollapsed = children[0].dataset.groupHidden === 'true';
-                    children.forEach(r => { r.dataset.groupHidden = isCollapsed ? 'false' : 'true'; });
-                    badge.textContent = isCollapsed ? '−' + (group.length - 1) : '+' + (group.length - 1);
-                    badge.classList.toggle('expanded', isCollapsed);
-                    applyFilters();
-                };
-
-                badge.addEventListener('click', toggleGroup);
-                // Also make the TX ID short text itself clickable for toggle
-                const shortEl = txIdCell.querySelector('.tx-id-short');
-                if (shortEl) {
-                    shortEl.style.cursor = 'pointer';
-                    shortEl.title = shortEl.title + ' (click to expand ' + (group.length - 1) + ' more)';
-                    shortEl.addEventListener('click', toggleGroup);
-                }
-            });
         }
 
         // ── Copy TX ID ────────────────────────────────────────────────────────
@@ -410,7 +366,6 @@
         document.addEventListener('DOMContentLoaded', function () {
             updateMetrics();
             setInterval(updateMetrics, 30000); // Update every 30s
-            groupByTxId();
             applyFilters();
         });
     </script>

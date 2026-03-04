@@ -33,6 +33,15 @@ public class TraceRepository {
                     extraInfo = objectMapper.readValue(extraJson, new TypeReference<Map<String, Object>>() {});
                 } catch (Exception ignored) {}
             }
+            
+            // Add event count if available in result set
+            try {
+                int eventCount = rs.getInt("event_count");
+                if (!rs.wasNull()) {
+                    extraInfo.put("eventCount", eventCount);
+                }
+            } catch (Exception ignored) {}
+
             return new TraceEvent(
                     rs.getString("event_id"),
                     rs.getString("tx_id"),
@@ -51,7 +60,8 @@ public class TraceRepository {
     }
 
     public List<TraceEvent> findTraces(String txId, String serverName) {
-        StringBuilder sql = new StringBuilder("SELECT * FROM trace_events WHERE 1=1 ");
+        StringBuilder sql = new StringBuilder("SELECT t.*, c.cnt as event_count FROM (");
+        sql.append("  SELECT DISTINCT ON (tx_id) * FROM trace_events WHERE 1=1 ");
         List<Object> params = new ArrayList<>();
 
         if (txId != null && !txId.isEmpty()) {
@@ -63,7 +73,10 @@ public class TraceRepository {
             params.add(serverName);
         }
 
-        sql.append("ORDER BY timestamp DESC LIMIT 100");
+        sql.append("  ORDER BY tx_id, timestamp ASC");
+        sql.append(") t ");
+        sql.append("JOIN (SELECT tx_id, COUNT(*) as cnt FROM trace_events GROUP BY tx_id) c ON t.tx_id = c.tx_id ");
+        sql.append("ORDER BY t.timestamp DESC LIMIT 100");
         return jdbcTemplate.query(sql.toString(), rowMapper(), params.toArray());
     }
 

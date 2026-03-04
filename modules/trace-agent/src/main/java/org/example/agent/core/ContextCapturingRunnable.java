@@ -2,7 +2,7 @@ package org.example.agent.core;
 
 /**
  * Wraps a {@link Runnable} to capture and restore trace context.
- * Now enhanced to record ASYNC_START and ASYNC_END events.
+ * Enhanced with lifecycle logging and ASYNC event recording.
  */
 public class ContextCapturingRunnable implements Runnable {
     private final Runnable delegate;
@@ -13,6 +13,9 @@ public class ContextCapturingRunnable implements Runnable {
         this.delegate = delegate;
         this.capturedTxId = TxIdHolder.get();
         this.capturedSpanId = SpanIdHolder.get();
+        if (capturedTxId != null) {
+            AgentLogger.debug("[ASYNC] Captured context for Runnable: txId=" + capturedTxId);
+        }
     }
 
     @Override
@@ -22,11 +25,12 @@ public class ContextCapturingRunnable implements Runnable {
             return;
         }
 
+        // Restore context to the new thread
         TxIdHolder.set(capturedTxId);
         SpanIdHolder.set(capturedSpanId);
         
         long startTime = System.currentTimeMillis();
-        // Fire ASYNC_START and get the new spanId for this thread's scope
+        // Record ASYNC_START and get the thread-local span ID for this task
         String asyncSpanId = TraceRuntime.onAsyncStart("Async-Runnable");
         
         try {
@@ -35,6 +39,7 @@ public class ContextCapturingRunnable implements Runnable {
             long duration = System.currentTimeMillis() - startTime;
             TraceRuntime.onAsyncEnd("Async-Runnable", asyncSpanId, duration);
             
+            // Clean up to prevent thread pollution in pool
             TxIdHolder.clear();
             SpanIdHolder.clear();
         }

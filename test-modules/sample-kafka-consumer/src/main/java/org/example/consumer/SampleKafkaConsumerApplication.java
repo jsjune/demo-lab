@@ -22,4 +22,6 @@ public class SampleKafkaConsumerApplication {
         template.setValueSerializer(new org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer());
         return template;
     }
+
+
 }

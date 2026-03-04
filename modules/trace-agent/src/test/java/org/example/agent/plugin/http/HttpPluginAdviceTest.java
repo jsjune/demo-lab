@@ -18,7 +18,7 @@ class HttpPluginAdviceTest {
     class DispatcherServletAdviceTest {
 
         @Test
-        @DisplayName("onMethodEnter 시 shouldSkipTracking 및 onHttpInStart가 호출되어야 한다")
+        @DisplayName("onMethodEnter 시 isSecondaryDispatch 및 onHttpInStart가 호출되어야 한다")
         void onMethodEnter_callsRuntime() {
             MethodVisitor mv = Mockito.mock(MethodVisitor.class);
             // descriptor index hints for isJakarta: contains "HttpServletRequest"
@@ -28,21 +28,21 @@ class HttpPluginAdviceTest {
 
             advice.onMethodEnter();
 
-            // verify shouldSkipTracking check
+            // verify secondary dispatch check
             verify(mv, atLeastOnce()).visitMethodInsn(
                 eq(Opcodes.INVOKESTATIC),
                 eq("org/example/agent/core/TraceRuntime"),
-                eq("shouldSkipTracking"),
+                eq("isSecondaryDispatch"),
                 anyString(),
                 eq(false)
             );
 
-            // verify onHttpInStart call (new signature: 5 args)
+            // verify onHttpInStart call (new signature: 6 args)
             verify(mv, atLeastOnce()).visitMethodInsn(
                 eq(Opcodes.INVOKESTATIC),
                 eq("org/example/agent/core/TraceRuntime"),
                 eq("onHttpInStart"),
-                eq("(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Z)V"),
+                eq("(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Z)V"),
                 eq(false)
             );
         }

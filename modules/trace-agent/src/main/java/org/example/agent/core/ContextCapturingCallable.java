@@ -4,7 +4,7 @@ import java.util.concurrent.Callable;
 
 /**
  * Wraps a {@link Callable} to capture and restore trace context.
- * Now enhanced to record ASYNC_START and ASYNC_END events.
+ * Enhanced with lifecycle logging and ASYNC event recording.
  */
 public class ContextCapturingCallable<V> implements Callable<V> {
     private final Callable<V> delegate;
@@ -15,6 +15,9 @@ public class ContextCapturingCallable<V> implements Callable<V> {
         this.delegate = delegate;
         this.capturedTxId = TxIdHolder.get();
         this.capturedSpanId = SpanIdHolder.get();
+        if (capturedTxId != null) {
+            AgentLogger.debug("[ASYNC] Captured context for Callable: txId=" + capturedTxId);
+        }
     }
 
     @Override
@@ -23,6 +26,7 @@ public class ContextCapturingCallable<V> implements Callable<V> {
             return delegate.call();
         }
 
+        // Restore context to the new thread
         TxIdHolder.set(capturedTxId);
         SpanIdHolder.set(capturedSpanId);
         
@@ -35,6 +39,7 @@ public class ContextCapturingCallable<V> implements Callable<V> {
             long duration = System.currentTimeMillis() - startTime;
             TraceRuntime.onAsyncEnd("Async-Callable", asyncSpanId, duration);
             
+            // Clean up to prevent thread pollution in pool
             TxIdHolder.clear();
             SpanIdHolder.clear();
         }

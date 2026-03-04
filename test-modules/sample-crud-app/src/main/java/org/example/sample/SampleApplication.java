@@ -1,8 +1,10 @@
 package org.example.sample;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.kafka.annotation.EnableKafka;
@@ -12,10 +14,13 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.util.Map;
+
 @EnableAsync
 @EnableKafka
 @SpringBootApplication
 @RestController
+@RequiredArgsConstructor
 public class SampleApplication {
 
     public static void main(String[] args) {
@@ -45,4 +50,5 @@ public class SampleApplication {
     public String error() {
         throw new RuntimeException("This is a test exception");
     }
+
 }
