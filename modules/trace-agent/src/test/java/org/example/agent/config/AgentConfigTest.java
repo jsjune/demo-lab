@@ -1,17 +1,30 @@
 package org.example.agent.config;
 
+import org.example.agent.testutil.TestStateGuard;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 @DisplayName("설정: AgentConfig (에이전트 설정 로드)")
 class AgentConfigTest {
+    private TestStateGuard stateGuard;
+
+    @BeforeEach
+    void setUp() throws Exception {
+        stateGuard = new TestStateGuard();
+        stateGuard.snapshotPropertiesField(AgentConfig.class, "props");
+    }
+
+    @AfterEach
+    void tearDown() {
+        stateGuard.close();
+    }
 
     @Test
     @DisplayName("기본 설정값들이 올바르게 로드되어야 한다")
@@ -39,8 +52,8 @@ class AgentConfigTest {
     @Test
     @DisplayName("플러그인 target-prefixes override/add 설정이 반영되어야 한다")
     void testPluginTargetPrefixesConfig() {
-        System.setProperty("trace.agent.plugin.test-ext.target-prefixes", "a.b.C, x/y/");
-        System.setProperty("trace.agent.plugin.test-ext.target-prefixes.add", "x.y/,z.k");
+        stateGuard.setSystemProperty("trace.agent.plugin.test-ext.target-prefixes", "a.b.C, x/y/");
+        stateGuard.setSystemProperty("trace.agent.plugin.test-ext.target-prefixes.add", "x.y/,z.k");
         AgentConfig.init();
 
         List<String> prefixes = AgentConfig.getPluginTargetPrefixes(
@@ -80,33 +93,21 @@ class AgentConfigTest {
     @DisplayName("sender.mode=batch 설정 시 'batch'를 반환해야 한다")
     void getSenderMode_customBatch_returnsBatch() throws Exception {
         setProperty("sender.mode", "batch");
-        try {
-            assertEquals("batch", AgentConfig.getSenderMode());
-        } finally {
-            removeProperty("sender.mode");
-        }
+        assertEquals("batch", AgentConfig.getSenderMode());
     }
 
     @Test
     @DisplayName("sender.batch.size=100 설정 시 100을 반환해야 한다")
     void getBatchSize_customValue_returnsConfiguredValue() throws Exception {
         setProperty("sender.batch.size", "100");
-        try {
-            assertEquals(100, AgentConfig.getBatchSize());
-        } finally {
-            removeProperty("sender.batch.size");
-        }
+        assertEquals(100, AgentConfig.getBatchSize());
     }
 
     @Test
     @DisplayName("sender.batch.flush-ms=1000 설정 시 1000을 반환해야 한다")
     void getBatchFlushMs_customValue_returnsConfiguredValue() throws Exception {
         setProperty("sender.batch.flush-ms", "1000");
-        try {
-            assertEquals(1000L, AgentConfig.getBatchFlushMs());
-        } finally {
-            removeProperty("sender.batch.flush-ms");
-        }
+        assertEquals(1000L, AgentConfig.getBatchFlushMs());
     }
 
     // -----------------------------------------------------------------------
@@ -114,14 +115,7 @@ class AgentConfigTest {
     // -----------------------------------------------------------------------
 
     private void setProperty(String key, String value) throws Exception {
-        Field propsField = AgentConfig.class.getDeclaredField("props");
-        propsField.setAccessible(true);
-        ((Properties) propsField.get(null)).setProperty(key, value);
+        stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", key, value);
     }
 
-    private void removeProperty(String key) throws Exception {
-        Field propsField = AgentConfig.class.getDeclaredField("props");
-        propsField.setAccessible(true);
-        ((Properties) propsField.get(null)).remove(key);
-    }
 }

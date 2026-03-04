@@ -6,6 +6,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -59,7 +60,7 @@ class SpanIdHolderTest {
             latch.countDown();
         });
         other.start();
-        latch.await();
+        assertTrue(latch.await(5, TimeUnit.SECONDS), "다른 스레드 작업이 timeout 내 종료되어야 한다");
 
         assertEquals("main-span", SpanIdHolder.get(),
                 "다른 스레드 set()이 현재 스레드에 영향을 주지 않아야 한다");

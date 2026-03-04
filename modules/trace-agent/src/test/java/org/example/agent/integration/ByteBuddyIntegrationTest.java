@@ -1,12 +1,7 @@
 package org.example.agent.integration;
 
-import org.objectweb.asm.ClassReader;
-import org.objectweb.asm.ClassWriter;
-
 import java.lang.instrument.ClassFileTransformer;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.io.InputStream;
 
 /**
  * Base class for bytecode transformation integration tests.
@@ -16,7 +11,14 @@ public abstract class ByteBuddyIntegrationTest {
     protected Class<?> transformAndLoad(Class<?> target, ClassFileTransformer transformer) throws Exception {
         String className = target.getName();
         String path = className.replace('.', '/') + ".class";
-        byte[] originalBuffer = target.getClassLoader().getResourceAsStream(path).readAllBytes();
+        byte[] originalBuffer;
+        try (InputStream in = target.getClassLoader().getResourceAsStream(path)) {
+            if (in == null) {
+                throw new IllegalStateException(
+                    "Cannot load bytecode resource '" + path + "' for class " + className);
+            }
+            originalBuffer = in.readAllBytes();
+        }
 
         byte[] transformedBuffer = transformer.transform(
             target.getClassLoader(),

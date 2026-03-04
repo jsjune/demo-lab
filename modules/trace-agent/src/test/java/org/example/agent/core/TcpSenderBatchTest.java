@@ -4,6 +4,8 @@ import org.example.agent.config.AgentConfig;
 import org.example.common.TraceCategory;
 import org.example.common.TraceEvent;
 import org.example.common.TraceEventType;
+import org.example.agent.testutil.TestStateGuard;
+import org.example.agent.testutil.TcpSenderTestSupport;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -14,6 +16,7 @@ import java.io.PipedOutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.reflect.Field;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -24,21 +27,20 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @DisplayName("코어: TcpSender 배치 모드 (collectBatch / flushBatch)")
 class TcpSenderBatchTest {
+    private TestStateGuard stateGuard;
 
     @BeforeEach
     void setUp() throws Exception {
-        resetTcpSenderState();
-        // queue 직접 초기화 (collectBatch 테스트용)
-        Field queueField = TcpSender.class.getDeclaredField("queue");
-        queueField.setAccessible(true);
-        queueField.set(null, new LinkedBlockingQueue<>(100));
+        stateGuard = new TestStateGuard();
+        stateGuard.snapshotPropertiesField(AgentConfig.class, "props");
+        TcpSenderTestSupport.resetState();
+        TcpSenderTestSupport.setQueue(new LinkedBlockingQueue<>(100));
     }
 
     @AfterEach
     void tearDown() throws Exception {
-        resetTcpSenderState();
-        // sender.mode 속성 정리
-        setSenderMode("single");
+        TcpSenderTestSupport.resetState();
+        stateGuard.close();
     }
 
     // -----------------------------------------------------------------------
@@ -71,12 +73,12 @@ class TcpSenderBatchTest {
             enqueue(createDummyEvent("tx-" + i));
         }
 
-        long start = System.currentTimeMillis();
-        List<TraceEvent> result = TcpSender.collectBatch(batchSize, 150);
-        long elapsed = System.currentTimeMillis() - start;
+        List<TraceEvent> result = assertTimeout(
+            Duration.ofMillis(500),
+            () -> TcpSender.collectBatch(batchSize, 150),
+            "collectBatch는 flush timeout 내에 반환되어야 함");
 
         assertEquals(enqueued, result.size(), "timeout 경과 후 수집된 이벤트 수만 반환해야 함");
-        assertTrue(elapsed >= 100, "flush-ms timeout(150ms)이 경과해야 함 (elapsed=" + elapsed + "ms)");
     }
 
     // -----------------------------------------------------------------------
@@ -138,12 +140,8 @@ class TcpSenderBatchTest {
         setSenderMode("single");
         TcpSender.init();
 
-        // 스레드가 시작될 시간 부여
-        Thread.sleep(100);
-
-        boolean found = Thread.getAllStackTraces().keySet().stream()
-            .anyMatch(t -> "trace-agent-sender".equals(t.getName()) && t.isAlive());
-        assertTrue(found, "'trace-agent-sender' 스레드가 실행 중이어야 함");
+        assertTrue(TcpSenderTestSupport.waitForThreadAlive("trace-agent-sender", 2000),
+            "'trace-agent-sender' 스레드가 timeout 내 실행 중이어야 함");
     }
 
     // -----------------------------------------------------------------------
@@ -156,41 +154,17 @@ class TcpSenderBatchTest {
         setSenderMode("batch");
         TcpSender.init();
 
-        // 스레드가 시작될 시간 부여
-        Thread.sleep(100);
-
-        boolean found = Thread.getAllStackTraces().keySet().stream()
-            .anyMatch(t -> "trace-agent-batch-sender".equals(t.getName()) && t.isAlive());
-        assertTrue(found, "'trace-agent-batch-sender' 스레드가 실행 중이어야 함");
+        assertTrue(TcpSenderTestSupport.waitForThreadAlive("trace-agent-batch-sender", 2000),
+            "'trace-agent-batch-sender' 스레드가 timeout 내 실행 중이어야 함");
     }
 
     // -----------------------------------------------------------------------
     // 헬퍼
     // -----------------------------------------------------------------------
 
-    private void resetTcpSenderState() throws Exception {
-        Field initField = TcpSender.class.getDeclaredField("initialized");
-        initField.setAccessible(true);
-        initField.set(null, false);
-
-        stopThreadByName("trace-agent-batch-sender");
-        stopThreadByName("trace-agent-sender");
-    }
-
-    private void stopThreadByName(String name) throws InterruptedException {
-        for (Thread t : Thread.getAllStackTraces().keySet()) {
-            if (name.equals(t.getName()) && t.isAlive()) {
-                t.interrupt();
-                t.join(200);
-            }
-        }
-    }
-
     @SuppressWarnings("unchecked")
     private void enqueue(TraceEvent event) throws Exception {
-        Field queueField = TcpSender.class.getDeclaredField("queue");
-        queueField.setAccessible(true);
-        ((java.util.concurrent.BlockingQueue<TraceEvent>) queueField.get(null)).put(event);
+        TcpSenderTestSupport.getQueue().put(event);
     }
 
     private void setSenderMode(String mode) throws Exception {

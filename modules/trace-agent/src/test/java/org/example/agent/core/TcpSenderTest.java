@@ -1,6 +1,8 @@
 package org.example.agent.core;
 
 import org.example.agent.config.AgentConfig;
+import org.example.agent.testutil.TestStateGuard;
+import org.example.agent.testutil.TcpSenderTestSupport;
 import org.example.common.TraceCategory;
 import org.example.common.TraceEvent;
 import org.example.common.TraceEventType;
@@ -9,46 +11,40 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import java.lang.reflect.Field;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 @DisplayName("코어: TcpSender (비동기 이벤트 전송)")
 class TcpSenderTest {
+    private TestStateGuard stateGuard;
 
     @BeforeEach
     @SuppressWarnings("unchecked")
     void setUp() throws Exception {
-        // queue는 init() 호출 시 생성되므로 테스트 전에 반드시 초기화
+        stateGuard = new TestStateGuard();
+        stateGuard.snapshotPropertiesField(AgentConfig.class, "props");
+        TcpSenderTestSupport.resetState();
         AgentConfig.init();
         TcpSender.init();
-        stopSenderDaemon();
-
-        Field queueField = TcpSender.class.getDeclaredField("queue");
-        queueField.setAccessible(true);
-        queueField.set(null, new LinkedBlockingQueue<>(AgentConfig.getBufferCapacity()));
+        TcpSenderTestSupport.stopSenderThreads(500);
+        TcpSenderTestSupport.setQueue(new LinkedBlockingQueue<>(AgentConfig.getBufferCapacity()));
     }
 
     @AfterEach
     @SuppressWarnings("unchecked")
     void tearDown() throws Exception {
         // 테스트 간 큐 상태 격리
-        Field queueField = TcpSender.class.getDeclaredField("queue");
-        queueField.setAccessible(true);
-        BlockingQueue<TraceEvent> queue = (BlockingQueue<TraceEvent>) queueField.get(null);
+        BlockingQueue<TraceEvent> queue = TcpSenderTestSupport.getQueue();
         if (queue != null) queue.clear();
-    }
-
-    private void stopSenderDaemon() throws InterruptedException {
-        for (Thread thread : Thread.getAllStackTraces().keySet()) {
-            if ("trace-agent-sender".equals(thread.getName()) && thread.isAlive()) {
-                thread.interrupt();
-                thread.join(200);
-            }
-        }
+        TcpSenderTestSupport.resetState();
+        stateGuard.close();
     }
 
     @Test
@@ -58,11 +54,7 @@ class TcpSenderTest {
         TraceEvent event = createDummyEvent("tx-1");
 
         TcpSender.send(event);
-
-        // 리플렉션으로 내부 큐 접근
-        Field queueField = TcpSender.class.getDeclaredField("queue");
-        queueField.setAccessible(true);
-        BlockingQueue<TraceEvent> queue = (BlockingQueue<TraceEvent>) queueField.get(null);
+        BlockingQueue<TraceEvent> queue = TcpSenderTestSupport.getQueue();
 
         assertTrue(queue.contains(event), "큐에 이벤트가 포함되어 있어야 함");
     }
@@ -71,14 +63,11 @@ class TcpSenderTest {
     @DisplayName("큐 오버플로우 시 새 이벤트가 수용되고 큐 용량 불변식이 유지되어야 한다")
     @SuppressWarnings("unchecked")
     void testQueueOverflowBehavior() throws Exception {
-        Field queueField = TcpSender.class.getDeclaredField("queue");
-        queueField.setAccessible(true);
-
         // 격리된 소용량 큐로 교체 — 백그라운드 daemon 스레드의 소비 영향을 최소화
         int capacity = 10;
         LinkedBlockingQueue<TraceEvent> isolatedQueue = new LinkedBlockingQueue<>(capacity);
-        BlockingQueue<TraceEvent> originalQueue = (BlockingQueue<TraceEvent>) queueField.get(null);
-        queueField.set(null, isolatedQueue);
+        BlockingQueue<TraceEvent> originalQueue = TcpSenderTestSupport.getQueue();
+        TcpSenderTestSupport.setQueue(isolatedQueue);
 
         try {
             // 큐를 용량만큼 직접 채움 (TcpSender.send 경유 시 daemon 소비 경쟁 발생)
@@ -95,7 +84,7 @@ class TcpSenderTest {
             // 새 이벤트는 반드시 큐에 존재 (오버플로우 또는 공간이 생겨 정상 추가)
             assertTrue(isolatedQueue.contains(newEvent), "새로운 이벤트가 큐에 포함되어야 함");
         } finally {
-            queueField.set(null, originalQueue); // 복원
+            TcpSenderTestSupport.setQueue(originalQueue); // 복원
         }
     }
 
@@ -103,17 +92,71 @@ class TcpSenderTest {
     @DisplayName("큐가 null인 경우(init 전) send() 호출 시 예외 없이 이벤트를 버려야 한다")
     @SuppressWarnings("unchecked")
     void testSendWhenQueueIsNull_silentlyDrops() throws Exception {
-        Field queueField = TcpSender.class.getDeclaredField("queue");
-        queueField.setAccessible(true);
-        BlockingQueue<TraceEvent> savedQueue = (BlockingQueue<TraceEvent>) queueField.get(null);
+        BlockingQueue<TraceEvent> savedQueue = TcpSenderTestSupport.getQueue();
 
         // init 전 상태 시뮬레이션: queue를 일시적으로 null로 설정
-        queueField.set(null, null);
+        TcpSenderTestSupport.setQueue(null);
         try {
+            long dropBefore = TcpSenderTestSupport.getDropCounterValue();
             assertDoesNotThrow(() -> TcpSender.send(createDummyEvent("tx-preInit")),
                 "queue == null 시 send()는 예외 없이 이벤트를 버려야 한다");
+            assertNull(TcpSenderTestSupport.getQueue(), "queue == null 상태는 send() 호출 후에도 유지되어야 한다");
+            assertEquals(dropBefore, TcpSenderTestSupport.getDropCounterValue(),
+                "queue == null 드롭은 버퍼 오버플로우 드롭 카운터를 증가시키지 않아야 한다");
         } finally {
-            queueField.set(null, savedQueue); // 복원
+            TcpSenderTestSupport.setQueue(savedQueue); // 복원
+        }
+    }
+
+    @Test
+    @DisplayName("다중 스레드 burst 상황에서도 큐 용량 불변식, 최신 이벤트 유지, drop 카운트 증가를 만족해야 한다")
+    void testConcurrentBurstPreservesCapacityAndNewestEvent() throws Exception {
+        int capacity = 32;
+        int threadCount = 8;
+        int sendsPerThread = 200;
+
+        BlockingQueue<TraceEvent> originalQueue = TcpSenderTestSupport.getQueue();
+        LinkedBlockingQueue<TraceEvent> isolatedQueue = new LinkedBlockingQueue<>(capacity);
+        TcpSenderTestSupport.setQueue(isolatedQueue);
+
+        long dropBefore = TcpSenderTestSupport.getDropCounterValue();
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch ready = new CountDownLatch(threadCount);
+        CountDownLatch start = new CountDownLatch(1);
+        CountDownLatch done = new CountDownLatch(threadCount);
+
+        try {
+            for (int t = 0; t < threadCount; t++) {
+                final int workerId = t;
+                executor.submit(() -> {
+                    ready.countDown();
+                    try {
+                        if (!start.await(5, TimeUnit.SECONDS)) return;
+                        for (int i = 0; i < sendsPerThread; i++) {
+                            TcpSender.send(createDummyEvent("burst-" + workerId + "-" + i));
+                        }
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    } finally {
+                        done.countDown();
+                    }
+                });
+            }
+
+            assertTrue(ready.await(5, TimeUnit.SECONDS), "모든 worker가 시작 준비를 마쳐야 한다");
+            start.countDown();
+            assertTrue(done.await(10, TimeUnit.SECONDS), "burst 전송이 timeout 내 종료되어야 한다");
+
+            TraceEvent newest = createDummyEvent("newest-marker");
+            TcpSender.send(newest);
+
+            assertTrue(isolatedQueue.size() <= capacity, "동시 전송 후에도 큐 용량을 초과하면 안 된다");
+            assertTrue(isolatedQueue.contains(newest), "가장 최근에 전송된 이벤트는 큐에 유지되어야 한다");
+            assertTrue(TcpSenderTestSupport.getDropCounterValue() > dropBefore,
+                "capacity를 초과한 burst에서는 drop 카운터가 증가해야 한다");
+        } finally {
+            executor.shutdownNow();
+            TcpSenderTestSupport.setQueue(originalQueue);
         }
     }
 
