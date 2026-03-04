@@ -1,4 +1,4 @@
-package org.example.agent.integration;
+package org.example.agent.instrumentation;
 
 import org.example.agent.core.TraceIgnore;
 import org.example.agent.core.TraceRuntime;

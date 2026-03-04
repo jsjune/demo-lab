@@ -1,9 +1,5 @@
-package org.example.agent.integration;
+package org.example.agent.core;
 
-import org.example.agent.core.ContextCapturingRunnable;
-import org.example.agent.core.SpanIdHolder;
-import org.example.agent.core.TcpSender;
-import org.example.agent.core.TxIdHolder;
 import org.example.common.TraceEvent;
 import org.junit.jupiter.api.*;
 import org.mockito.MockedStatic;
@@ -15,8 +11,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mockStatic;
 
-@DisplayName("ExecutorPlugin Integration Tests")
-class ExecutorPluginIntegrationTest {
+@DisplayName("Component: ContextCapturingRunnable context propagation")
+class ExecutorContextPropagationTest {
 
     private MockedStatic<TcpSender> tcpMock;
 

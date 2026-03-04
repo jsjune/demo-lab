@@ -1,4 +1,4 @@
-package org.example.agent.integration;
+package org.example.agent.bootstrap;
 
 import org.example.agent.AgentInitializer;
 import org.example.agent.TraceAgent;
@@ -21,8 +21,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
-@DisplayName("통합: Agent bootstrap/initializer 흐름")
-class HttpAgentIntegrationTest {
+@DisplayName("Bootstrap flow: TraceAgent/AgentInitializer wiring")
+class AgentBootstrapFlowTest {
 
     @Test
     @DisplayName("AgentInitializer가 CompositeTransformer를 등록해야 한다")

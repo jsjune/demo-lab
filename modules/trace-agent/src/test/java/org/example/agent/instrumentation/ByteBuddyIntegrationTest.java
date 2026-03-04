@@ -1,4 +1,4 @@
-package org.example.agent.integration;
+package org.example.agent.instrumentation;
 
 import java.lang.instrument.ClassFileTransformer;
 import java.io.InputStream;

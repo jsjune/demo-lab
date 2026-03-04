@@ -1,4 +1,4 @@
-package org.example.agent.integration;
+package org.example.agent.instrumentation;
 
 import org.example.agent.core.TraceRuntime;
 import org.example.agent.plugin.executor.ExecutorPlugin;
@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 
 import java.lang.instrument.ClassFileTransformer;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -22,7 +23,10 @@ class ExecutorAsyncErrorInstrumentationTest extends ByteBuddyIntegrationTest {
         Class<?> transformed = transformAndLoad(
             org.springframework.aop.interceptor.AsyncExecutionAspectSupport.class,
             transformer);
-        Object instance = transformed.getDeclaredConstructor().newInstance();
+        Constructor<?> ctor = transformed.getDeclaredConstructors()[0];
+        ctor.setAccessible(true);
+        Object[] args = new Object[ctor.getParameterCount()];
+        Object instance = ctor.newInstance(args);
         Method handleError = transformed.getDeclaredMethod(
             "handleError", Throwable.class, Method.class, Object[].class);
         handleError.setAccessible(true);

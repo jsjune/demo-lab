@@ -4,7 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.example.agent.config.AgentConfig;
 import org.example.agent.core.TraceRuntime;
-import org.example.agent.integration.ByteBuddyIntegrationTest;
+import org.example.agent.instrumentation.ByteBuddyIntegrationTest;
 import org.example.agent.testutil.TestStateGuard;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
