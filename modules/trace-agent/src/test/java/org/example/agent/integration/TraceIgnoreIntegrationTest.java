@@ -20,17 +20,13 @@ class TraceIgnoreIntegrationTest extends ByteBuddyIntegrationTest {
         KafkaPlugin plugin = new KafkaPlugin();
         // transformers(): [0] KafkaProducerTransformer, [1] KafkaAdapterTransformer
         var adapterTransformer = plugin.transformers().get(1);
+        String className = NormalKafkaListener.class.getName().replace('.', '/');
+        byte[] original = loadClassBytes(NormalKafkaListener.class);
+        byte[] transformed = adapterTransformer.transform(
+            NormalKafkaListener.class.getClassLoader(), className, NormalKafkaListener.class, null, original);
 
-        // onMessage(String) 시그니처 — ConsumerRecord 필터를 통과하지 못해 인스트루멘테이션 미적용
-        Class<?> transformedClass = transformAndLoad(NormalKafkaListener.class, adapterTransformer);
-        Object instance = transformedClass.getDeclaredConstructor().newInstance();
-        Method method = transformedClass.getDeclaredMethod("onMessage", String.class);
-
-        try (MockedStatic<TraceRuntime> runtimeMock = mockStatic(TraceRuntime.class)) {
-            method.invoke(instance, "test-payload");
-
-            runtimeMock.verify(() -> TraceRuntime.onMqConsumeStart(any(), any(), any()), never());
-        }
+        // 필터 미매칭이면 transformer는 null을 반환해야 한다.
+        org.junit.jupiter.api.Assertions.assertNull(transformed);
     }
 
     @Test
@@ -78,6 +74,14 @@ class TraceIgnoreIntegrationTest extends ByteBuddyIntegrationTest {
         @TraceIgnore
         @org.springframework.kafka.annotation.KafkaListener(topics = "test")
         public void onMessage(String data) {
+        }
+    }
+
+    private byte[] loadClassBytes(Class<?> clazz) throws Exception {
+        String path = clazz.getName().replace('.', '/') + ".class";
+        try (java.io.InputStream in = clazz.getClassLoader().getResourceAsStream(path)) {
+            if (in == null) throw new IllegalStateException("class bytes not found: " + path);
+            return in.readAllBytes();
         }
     }
 }

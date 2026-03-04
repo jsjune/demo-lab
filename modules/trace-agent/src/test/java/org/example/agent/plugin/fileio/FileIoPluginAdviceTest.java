@@ -37,6 +37,7 @@ class FileIoPluginAdviceTest {
         MethodVisitor mv = Mockito.mock(MethodVisitor.class);
         FileIoPlugin.FileOutputStreamAdvice advice = new FileIoPlugin.FileOutputStreamAdvice(mv, Opcodes.ACC_PUBLIC, "write", "([BII)V");
 
+        advice.onMethodEnter();
         advice.onMethodExit(Opcodes.RETURN);
 
         // TraceRuntime.onFileWrite 호출 확인
@@ -44,7 +45,43 @@ class FileIoPluginAdviceTest {
             eq(Opcodes.INVOKESTATIC),
             eq("org/example/agent/core/TraceRuntime"),
             eq("onFileWrite"),
-            anyString(),
+            eq("(Ljava/lang/String;JJZ)V"),
+            eq(false)
+        );
+    }
+
+    @Test
+    @DisplayName("FileInputStream.read 예외 종료 시 onFileReadError가 호출되어야 한다")
+    void testFileInputStreamAdviceOnMethodExit_throw_callsError() {
+        MethodVisitor mv = Mockito.mock(MethodVisitor.class);
+        FileIoPlugin.FileInputStreamAdvice advice = new FileIoPlugin.FileInputStreamAdvice(mv, Opcodes.ACC_PUBLIC, "read", "([BII)I");
+
+        advice.onMethodEnter();
+        advice.onMethodExit(Opcodes.ATHROW);
+
+        verify(mv, atLeastOnce()).visitMethodInsn(
+            eq(Opcodes.INVOKESTATIC),
+            eq("org/example/agent/core/TraceRuntime"),
+            eq("onFileReadError"),
+            eq("(Ljava/lang/String;JJLjava/lang/Throwable;)V"),
+            eq(false)
+        );
+    }
+
+    @Test
+    @DisplayName("FileOutputStream.write 예외 종료 시 onFileWriteError가 호출되어야 한다")
+    void testFileOutputStreamAdviceOnMethodExit_throw_callsError() {
+        MethodVisitor mv = Mockito.mock(MethodVisitor.class);
+        FileIoPlugin.FileOutputStreamAdvice advice = new FileIoPlugin.FileOutputStreamAdvice(mv, Opcodes.ACC_PUBLIC, "write", "([BII)V");
+
+        advice.onMethodEnter();
+        advice.onMethodExit(Opcodes.ATHROW);
+
+        verify(mv, atLeastOnce()).visitMethodInsn(
+            eq(Opcodes.INVOKESTATIC),
+            eq("org/example/agent/core/TraceRuntime"),
+            eq("onFileWriteError"),
+            eq("(Ljava/lang/String;JJLjava/lang/Throwable;)V"),
             eq(false)
         );
     }

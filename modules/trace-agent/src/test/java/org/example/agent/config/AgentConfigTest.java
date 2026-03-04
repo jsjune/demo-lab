@@ -7,6 +7,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 
@@ -113,6 +115,43 @@ class AgentConfigTest {
     }
 
     @Test
+    @DisplayName("숫자 설정 파싱 실패 시 default fallback을 반환해야 한다")
+    void numericParseFailure_returnsDefaults() throws Exception {
+        setProperty("collector.port", "not-int");
+        setProperty("sender.batch.flush-ms", "not-long");
+        setProperty("sampling.rate", "not-double");
+
+        assertEquals(9200, AgentConfig.getCollectorPort());
+        assertEquals(500L, AgentConfig.getBatchFlushMs());
+        assertEquals(1.0, AgentConfig.getSamplingRate());
+    }
+
+    @Test
+    @DisplayName("target-prefixes에서 공백/중복/점표기/앞슬래시를 정규화해야 한다")
+    void pluginTargetPrefixes_normalizesAndDeduplicates() {
+        stateGuard.setSystemProperty("trace.agent.plugin.normalize.target-prefixes", " /a.b.C, a/b/C , , /x/y/ ");
+        stateGuard.setSystemProperty("trace.agent.plugin.normalize.target-prefixes.add", "x.y/, z/k , /z/k");
+        AgentConfig.init();
+
+        List<String> prefixes = AgentConfig.getPluginTargetPrefixes("normalize", null);
+        assertEquals(Arrays.asList("a/b/C", "x/y/", "z/k"), prefixes);
+    }
+
+    @Test
+    @DisplayName("외부 설정 파일(trace.agent.config) 값이 init()에 반영되어야 한다")
+    void init_loadsExternalConfigFile() throws Exception {
+        Path temp = Files.createTempFile("trace-agent-test", ".properties");
+        Files.writeString(temp, "collector.host=ext-host\ncollector.port=9301\nserver-name=ext-server\n");
+        stateGuard.setSystemProperty("trace.agent.config", temp.toString());
+
+        AgentConfig.init();
+
+        assertEquals("ext-host", AgentConfig.getCollectorHost());
+        assertEquals(9301, AgentConfig.getCollectorPort());
+        assertEquals("ext-server", AgentConfig.getServerName());
+    }
+
+    @Test
     @DisplayName("spring.version 미설정 시 기본 프로필은 SPRING_5")
     void getSpringVersionProfile_defaultIsSpring5() {
         assertEquals(SpringVersionProfile.SPRING_5, AgentConfig.getSpringVersionProfile());
@@ -138,6 +177,13 @@ class AgentConfigTest {
     }
 
     @Test
+    @DisplayName("http.accessor.class override가 우선 적용되어야 한다")
+    void httpAccessorOverride_isPreferred() throws Exception {
+        setProperty("http.accessor.class", "a/b/CAccessor");
+        assertEquals("a/b/CAccessor", AgentConfig.getHttpAccessorClass());
+    }
+
+    @Test
     @DisplayName("updateProfileFromLoader로 profile이 해석되면 resolved 상태가 true여야 한다")
     void updateProfileFromLoader_marksResolved() throws Exception {
         setResolvedProfile(null);
@@ -160,6 +206,41 @@ class AgentConfigTest {
         AgentConfig.updateProfileFromLoader(loader);
 
         assertEquals(SpringVersionProfile.SPRING_5, AgentConfig.getSpringVersionProfile());
+    }
+
+    @Test
+    @DisplayName("updateProfileFromLoader(null)은 아무 변화 없이 안전해야 한다")
+    void updateProfileFromLoader_nullLoader_noop() throws Exception {
+        setResolvedProfile(null);
+        AgentConfig.updateProfileFromLoader(null);
+        assertFalse(AgentConfig.isSpringVersionResolved());
+        assertEquals(SpringVersionProfile.SPRING_5, AgentConfig.getSpringVersionProfile());
+    }
+
+    @Test
+    @DisplayName("기타 공통 설정 getter들이 커스텀 값/기본값을 반환해야 한다")
+    void commonGetters_coverCustomAndDefault() throws Exception {
+        setProperty("header-key", "X-Custom-Tx");
+        setProperty("force-sample-header", "X-Force");
+        setProperty("buffer.capacity", "123");
+        setProperty("shutdown.drain-timeout-ms", "4567");
+        setProperty("slow-query-ms", "77");
+        setProperty("min-size-bytes", "88");
+        setProperty("log.file.path", "tmp/trace.log");
+        setProperty("log.file.limit", "999");
+        setProperty("log.file.count", "7");
+        setProperty("log.level", "DEBUG");
+
+        assertEquals("X-Custom-Tx", AgentConfig.getHeaderKey());
+        assertEquals("X-Force", AgentConfig.getForceSampleHeader());
+        assertEquals(123, AgentConfig.getBufferCapacity());
+        assertEquals(4567L, AgentConfig.getShutdownDrainTimeoutMs());
+        assertEquals(77L, AgentConfig.getSlowQueryMs());
+        assertEquals(88L, AgentConfig.getMinSizeBytes());
+        assertEquals("tmp/trace.log", AgentConfig.getLogFilePath());
+        assertEquals(999, AgentConfig.getLogFileLimit());
+        assertEquals(7, AgentConfig.getLogFileCount());
+        assertEquals("DEBUG", AgentConfig.getLogLevel());
     }
 
     // -----------------------------------------------------------------------

@@ -45,6 +45,77 @@ class HttpPluginAdviceTest {
                 eq(false)
             );
         }
+
+        @Test
+        @DisplayName("onMethodExit(ATHROW) 시 onHttpInError 호출 바이트코드가 삽입되어야 한다")
+        void onMethodExit_athrow_callsOnHttpInError() {
+            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
+            HttpPlugin.DispatcherServletAdvice advice =
+                new HttpPlugin.DispatcherServletAdvice(
+                    mv, Opcodes.ACC_PROTECTED, "doDispatch",
+                    "(Ljakarta/servlet/http/HttpServletRequest;Ljakarta/servlet/http/HttpServletResponse;)V", true);
+
+            advice.onMethodEnter();
+            advice.onMethodExit(Opcodes.ATHROW);
+
+            verify(mv, atLeastOnce()).visitMethodInsn(
+                eq(Opcodes.INVOKESTATIC),
+                eq("org/example/agent/core/TraceRuntime"),
+                eq("onHttpInError"),
+                eq("(Ljava/lang/Throwable;Ljava/lang/String;Ljava/lang/String;J)V"),
+                eq(false)
+            );
+        }
+
+        @Test
+        @DisplayName("onMethodExit(RETURN) 시 onHttpInEnd/registerAsyncListener 분기 코드가 삽입되어야 한다")
+        void onMethodExit_return_emitsEndAndAsyncRegistrationCode() {
+            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
+            HttpPlugin.DispatcherServletAdvice advice =
+                new HttpPlugin.DispatcherServletAdvice(
+                    mv, Opcodes.ACC_PROTECTED, "doDispatch",
+                    "(Ljakarta/servlet/http/HttpServletRequest;Ljakarta/servlet/http/HttpServletResponse;)V", true);
+
+            advice.onMethodEnter();
+            advice.onMethodExit(Opcodes.RETURN);
+
+            verify(mv, atLeastOnce()).visitMethodInsn(
+                eq(Opcodes.INVOKESTATIC),
+                eq("org/example/agent/core/TraceRuntime"),
+                eq("onHttpInEnd"),
+                eq("(Ljava/lang/String;Ljava/lang/String;IJ)V"),
+                eq(false)
+            );
+            verify(mv, atLeastOnce()).visitMethodInsn(
+                eq(Opcodes.INVOKESTATIC),
+                eq("org/example/agent/core/TraceRuntime"),
+                eq("registerAsyncListener"),
+                eq("(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/String;J)V"),
+                eq(false)
+            );
+        }
+
+        @Test
+        @DisplayName("@TraceIgnore 애노테이션이면 enter/exit에서 runtime 호출을 삽입하지 않아야 한다")
+        void traceIgnoreAnnotation_skipsInstrumentation() {
+            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
+            HttpPlugin.DispatcherServletAdvice advice =
+                new HttpPlugin.DispatcherServletAdvice(
+                    mv, Opcodes.ACC_PROTECTED, "doDispatch",
+                    "(Ljakarta/servlet/http/HttpServletRequest;Ljakarta/servlet/http/HttpServletResponse;)V", true);
+
+            advice.visitAnnotation("Lorg/example/TraceIgnore;", true);
+            advice.onMethodEnter();
+            advice.onMethodExit(Opcodes.RETURN);
+
+            verify(mv, never()).visitMethodInsn(
+                eq(Opcodes.INVOKESTATIC),
+                eq("org/example/agent/core/TraceRuntime"),
+                eq("onHttpInStart"),
+                anyString(),
+                eq(false)
+            );
+        }
     }
 
     @Nested

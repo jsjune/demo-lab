@@ -18,6 +18,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -160,10 +166,263 @@ class TcpSenderTest {
         }
     }
 
+    @Test
+    @DisplayName("drain(): queue가 null이거나 비어있으면 조용히 종료해야 한다")
+    void drain_nullOrEmptyQueue_returnsQuietly() throws Exception {
+        BlockingQueue<TraceEvent> savedQueue = TcpSenderTestSupport.getQueue();
+        try {
+            TcpSenderTestSupport.setQueue(null);
+            assertDoesNotThrow(this::invokePrivateDrain);
+
+            TcpSenderTestSupport.setQueue(new LinkedBlockingQueue<>(10));
+            assertDoesNotThrow(this::invokePrivateDrain);
+        } finally {
+            TcpSenderTestSupport.setQueue(savedQueue);
+        }
+    }
+
+    @Test
+    @DisplayName("drain(): 남은 이벤트를 collector로 전송해야 한다")
+    void drain_sendsRemainingEventsToCollector() throws Exception {
+        try (ServerSocket server = new ServerSocket(0)) {
+            int port = server.getLocalPort();
+            stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "collector.host", "127.0.0.1");
+            stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "collector.port", String.valueOf(port));
+
+            LinkedBlockingQueue<TraceEvent> q = new LinkedBlockingQueue<>(10);
+            q.offer(createDummyEvent("tx-drain-1"));
+            q.offer(createDummyEvent("tx-drain-2"));
+            TcpSenderTestSupport.setQueue(q);
+
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
+                Future<String> linesFuture = executor.submit(() -> {
+                    try (Socket s = server.accept();
+                         BufferedReader br = new BufferedReader(
+                             new InputStreamReader(s.getInputStream(), StandardCharsets.UTF_8))) {
+                        String l1 = br.readLine();
+                        String l2 = br.readLine();
+                        return (l1 == null ? "" : l1) + "\n" + (l2 == null ? "" : l2);
+                    }
+                });
+
+                invokePrivateDrain();
+                String joined = linesFuture.get(3, TimeUnit.SECONDS);
+                assertTrue(joined.contains("tx-drain-1"));
+                assertTrue(joined.contains("tx-drain-2"));
+                assertTrue(q.isEmpty(), "drain 후 queue는 비어야 한다");
+            } finally {
+                executor.shutdownNow();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("single sender thread가 collector로 이벤트 1건을 전송해야 한다")
+    void singleSenderThread_sendsEventToCollector() throws Exception {
+        TcpSenderTestSupport.resetState();
+        try (ServerSocket server = new ServerSocket(0)) {
+            int port = server.getLocalPort();
+            stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "sender.mode", "single");
+            stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "collector.host", "127.0.0.1");
+            stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "collector.port", String.valueOf(port));
+            stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "buffer.capacity", "16");
+
+            TcpSender.init();
+            assertTrue(TcpSenderTestSupport.waitForThreadAlive("trace-agent-sender", 2000));
+
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
+                Future<String> lineFuture = executor.submit(() -> {
+                    try (Socket s = server.accept();
+                         BufferedReader br = new BufferedReader(
+                             new InputStreamReader(s.getInputStream(), StandardCharsets.UTF_8))) {
+                        return br.readLine();
+                    }
+                });
+
+                TcpSender.send(createDummyEvent("tx-single-live"));
+                String line = lineFuture.get(3, TimeUnit.SECONDS);
+                assertNotNull(line);
+                assertTrue(line.contains("tx-single-live"));
+            } finally {
+                executor.shutdownNow();
+            }
+        } finally {
+            TcpSenderTestSupport.stopSenderThreads(500);
+        }
+    }
+
+    @Test
+    @DisplayName("batch sender thread가 collector로 배치 이벤트를 전송해야 한다")
+    void batchSenderThread_sendsBatchToCollector() throws Exception {
+        TcpSenderTestSupport.resetState();
+        try (ServerSocket server = new ServerSocket(0)) {
+            int port = server.getLocalPort();
+            stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "sender.mode", "batch");
+            stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "collector.host", "127.0.0.1");
+            stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "collector.port", String.valueOf(port));
+            stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "buffer.capacity", "16");
+            stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "sender.batch.size", "2");
+            stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "sender.batch.flush-ms", "100");
+
+            TcpSender.init();
+            assertTrue(TcpSenderTestSupport.waitForThreadAlive("trace-agent-batch-sender", 2000));
+
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
+                Future<String> linesFuture = executor.submit(() -> {
+                    try (Socket s = server.accept();
+                         BufferedReader br = new BufferedReader(
+                             new InputStreamReader(s.getInputStream(), StandardCharsets.UTF_8))) {
+                        String l1 = br.readLine();
+                        String l2 = br.readLine();
+                        return (l1 == null ? "" : l1) + "\n" + (l2 == null ? "" : l2);
+                    }
+                });
+
+                TcpSender.send(createDummyEvent("tx-batch-live-1"));
+                TcpSender.send(createDummyEvent("tx-batch-live-2"));
+
+                String lines = linesFuture.get(3, TimeUnit.SECONDS);
+                assertTrue(lines.contains("tx-batch-live-1"));
+                assertTrue(lines.contains("tx-batch-live-2"));
+            } finally {
+                executor.shutdownNow();
+            }
+        } finally {
+            TcpSenderTestSupport.stopSenderThreads(500);
+        }
+    }
+
+    @Test
+    @DisplayName("init()는 이미 initialized=true면 상태를 변경하지 않아야 한다")
+    void init_whenAlreadyInitialized_returnsImmediately() throws Exception {
+        BlockingQueue<TraceEvent> sentinel = new LinkedBlockingQueue<>(3);
+        sentinel.offer(createDummyEvent("sentinel"));
+        TcpSenderTestSupport.setQueue(sentinel);
+
+        var f = TcpSender.class.getDeclaredField("initialized");
+        f.setAccessible(true);
+        f.set(null, true);
+        try {
+            TcpSender.init();
+            assertSame(sentinel, TcpSenderTestSupport.getQueue());
+            assertEquals(1, TcpSenderTestSupport.getQueue().size());
+        } finally {
+            f.set(null, false);
+        }
+    }
+
+    @Test
+    @DisplayName("drain(): collector 연결 실패 시에도 예외 없이 종료해야 한다")
+    void drain_connectionFailure_isSwallowed() throws Exception {
+        stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "collector.host", "127.0.0.1");
+        stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "collector.port", "1");
+
+        LinkedBlockingQueue<TraceEvent> q = new LinkedBlockingQueue<>(10);
+        q.offer(createDummyEvent("tx-drain-fail"));
+        TcpSenderTestSupport.setQueue(q);
+
+        assertDoesNotThrow(this::invokePrivateDrain);
+        assertTrue(q.isEmpty(), "drain은 전송 실패여도 queue를 비워야 한다");
+    }
+
+    @Test
+    @DisplayName("single sender loop lambda를 직접 실행해 이벤트 전송 경로를 커버한다")
+    void singleSenderLoopLambda_directInvocation() throws Exception {
+        LinkedBlockingQueue<TraceEvent> q = new LinkedBlockingQueue<>(16);
+        q.offer(createDummyEvent("tx-lambda-single"));
+        TcpSenderTestSupport.setQueue(q);
+
+        try (ServerSocket server = new ServerSocket(0)) {
+            stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "collector.host", "127.0.0.1");
+            stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "collector.port", String.valueOf(server.getLocalPort()));
+
+            ExecutorService es = Executors.newSingleThreadExecutor();
+            Future<String> lineFuture = es.submit(() -> {
+                try (Socket s = server.accept();
+                     BufferedReader br = new BufferedReader(new InputStreamReader(s.getInputStream(), StandardCharsets.UTF_8))) {
+                    return br.readLine();
+                }
+            });
+
+            Thread t = new Thread(() -> {
+                try {
+                    var m = TcpSender.class.getDeclaredMethod("lambda$init$0");
+                    m.setAccessible(true);
+                    m.invoke(null);
+                } catch (Throwable ignored) {
+                }
+            });
+            t.start();
+
+            try {
+                String line = lineFuture.get(3, TimeUnit.SECONDS);
+                assertNotNull(line);
+                assertTrue(line.contains("tx-lambda-single"));
+            } finally {
+                t.interrupt();
+                t.join(1000);
+                es.shutdownNow();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("batch sender loop lambda를 직접 실행해 배치 flush 경로를 커버한다")
+    void batchSenderLoopLambda_directInvocation() throws Exception {
+        LinkedBlockingQueue<TraceEvent> q = new LinkedBlockingQueue<>(16);
+        q.offer(createDummyEvent("tx-lambda-batch-1"));
+        q.offer(createDummyEvent("tx-lambda-batch-2"));
+        TcpSenderTestSupport.setQueue(q);
+
+        try (ServerSocket server = new ServerSocket(0)) {
+            stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "collector.host", "127.0.0.1");
+            stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "collector.port", String.valueOf(server.getLocalPort()));
+
+            ExecutorService es = Executors.newSingleThreadExecutor();
+            Future<String> linesFuture = es.submit(() -> {
+                try (Socket s = server.accept();
+                     BufferedReader br = new BufferedReader(new InputStreamReader(s.getInputStream(), StandardCharsets.UTF_8))) {
+                    String l1 = br.readLine();
+                    String l2 = br.readLine();
+                    return (l1 == null ? "" : l1) + "\n" + (l2 == null ? "" : l2);
+                }
+            });
+
+            Thread t = new Thread(() -> {
+                try {
+                    var m = TcpSender.class.getDeclaredMethod("lambda$startBatchSenderThread$2", int.class, long.class);
+                    m.setAccessible(true);
+                    m.invoke(null, 2, 50L);
+                } catch (Throwable ignored) {
+                }
+            });
+            t.start();
+
+            try {
+                String lines = linesFuture.get(3, TimeUnit.SECONDS);
+                assertTrue(lines.contains("tx-lambda-batch-1"));
+                assertTrue(lines.contains("tx-lambda-batch-2"));
+            } finally {
+                t.interrupt();
+                t.join(1000);
+                es.shutdownNow();
+            }
+        }
+    }
+
     private TraceEvent createDummyEvent(String txId) {
         return new TraceEvent(
             "id", txId, "s-1", null, TraceEventType.HTTP_IN_START, TraceCategory.HTTP,
             "server", "target", 0L, true, System.currentTimeMillis(), Map.of()
         );
+    }
+
+    private void invokePrivateDrain() throws Exception {
+        var m = TcpSender.class.getDeclaredMethod("drain");
+        m.setAccessible(true);
+        m.invoke(null);
     }
 }
