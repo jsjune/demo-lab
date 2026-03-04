@@ -67,6 +67,15 @@ class AgentConfigTest {
         assertEquals(Arrays.asList("a/b/C", "x/y/", "z/k"), prefixes);
     }
 
+    @Test
+    @DisplayName("target-prefixes override가 없으면 defaults가 normalize되어 사용되어야 한다")
+    void pluginTargetPrefixes_usesDefaultsWhenNoOverride() {
+        List<String> prefixes = AgentConfig.getPluginTargetPrefixes(
+            "no-override",
+            Arrays.asList("/a.b.C", "x/y/", " ", "x/y/"));
+        assertEquals(Arrays.asList("a/b/C", "x/y/"), prefixes);
+    }
+
     // -----------------------------------------------------------------------
     // sender.mode / batch 설정 기본값 검증
     // -----------------------------------------------------------------------
@@ -149,6 +158,13 @@ class AgentConfigTest {
         assertEquals("ext-host", AgentConfig.getCollectorHost());
         assertEquals(9301, AgentConfig.getCollectorPort());
         assertEquals("ext-server", AgentConfig.getServerName());
+    }
+
+    @Test
+    @DisplayName("없는 외부 설정 파일이어도 init()는 예외 없이 동작해야 한다")
+    void init_missingExternalConfig_isSafe() {
+        stateGuard.setSystemProperty("trace.agent.config", "Z:/no/such/trace-agent.properties");
+        assertDoesNotThrow(AgentConfig::init);
     }
 
     @Test

@@ -2,6 +2,13 @@ package org.example.agent.plugin.jdbc;
 
 import org.example.agent.testutil.AsmTestUtils;
 import org.junit.jupiter.api.Test;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.FieldVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+
+import java.lang.reflect.Field;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -55,6 +62,34 @@ class JdbcPluginTransformerCoverageTest {
         assertEquals("SQL:select 1", JdbcPlugin.extractSql(new SimpleStatement("SQL:select 1")));
     }
 
+    @Test
+    void pluginMetadata_andTargetPrefixes() {
+        JdbcPlugin p = new JdbcPlugin();
+        assertEquals("jdbc", p.pluginId());
+        assertEquals(1, p.transformers().size());
+        List<String> prefixes = p.targetClassPrefixes();
+        assertTrue(prefixes.stream().anyMatch(s -> s.contains("jdbc")));
+    }
+
+    @Test
+    void parseDbHost_extraBranches() {
+        assertEquals("not-a-url", JdbcPlugin.parseDbHost("not-a-url"));
+        assertEquals("mysql://host:3306", JdbcPlugin.parseDbHost("jdbc:mysql://u:p@host:3306/db"));
+        assertEquals("sqlserver://host:1433", JdbcPlugin.parseDbHost("jdbc:sqlserver://host:1433;databaseName=x"));
+    }
+
+    @Test
+    void extractSql_mysqlBranch_readsQueryField() throws Exception {
+        byte[] bytes = mysqlLikePreparedStatementBytes();
+        Class<?> clazz = new DefineClassLoader().define("com.mysql.jdbc.FakePreparedStatement", bytes);
+        Object instance = clazz.getDeclaredConstructor().newInstance();
+        Field query = clazz.getDeclaredField("query");
+        query.setAccessible(true);
+        query.set(instance, "SELECT * FROM user");
+
+        assertEquals("SELECT * FROM user", JdbcPlugin.extractSql(instance));
+    }
+
     static class NoConnectionStatement {
         @SuppressWarnings("unused")
         public Object getConnection() {
@@ -97,5 +132,36 @@ class JdbcPluginTransformerCoverageTest {
             return text;
         }
     }
-}
 
+    static class DefineClassLoader extends ClassLoader {
+        Class<?> define(String name, byte[] bytes) {
+            return defineClass(name, bytes, 0, bytes.length);
+        }
+    }
+
+    private static byte[] mysqlLikePreparedStatementBytes() {
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        String n = "com/mysql/jdbc/FakePreparedStatement";
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, n, null, "java/lang/Object", null);
+        FieldVisitor fv = cw.visitField(Opcodes.ACC_PUBLIC, "query", "Ljava/lang/Object;", null, null);
+        fv.visitEnd();
+
+        MethodVisitor ctor = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
+        ctor.visitCode();
+        ctor.visitVarInsn(Opcodes.ALOAD, 0);
+        ctor.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+        ctor.visitInsn(Opcodes.RETURN);
+        ctor.visitMaxs(0, 0);
+        ctor.visitEnd();
+
+        MethodVisitor toString = cw.visitMethod(Opcodes.ACC_PUBLIC, "toString", "()Ljava/lang/String;", null, null);
+        toString.visitCode();
+        toString.visitLdcInsn("fallback-toString");
+        toString.visitInsn(Opcodes.ARETURN);
+        toString.visitMaxs(0, 0);
+        toString.visitEnd();
+
+        cw.visitEnd();
+        return cw.toByteArray();
+    }
+}

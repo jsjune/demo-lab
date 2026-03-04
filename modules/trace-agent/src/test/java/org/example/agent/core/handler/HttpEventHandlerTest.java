@@ -379,6 +379,29 @@ class HttpEventHandlerTest {
         assertNull(out);
     }
 
+    @Test
+    @DisplayName("T-23: private extractStatusCode class-not-found 경로는 -1")
+    void privateExtractStatusCode_fallbackMinusOne() throws Exception {
+        Method m = HttpEventHandler.class.getDeclaredMethod("extractStatusCode", Object.class);
+        m.setAccessible(true);
+        clearHttpEventHandlerCaches();
+
+        Object response = new Object();
+        int out = (int) m.invoke(null, response);
+        assertEquals(-1, out);
+    }
+
+    @Test
+    @DisplayName("T-24: private extractWebFluxResponseStatus class-not-found 경로는 -1")
+    void privateExtractWebFluxResponseStatus_fallbackMinusOne() throws Exception {
+        Method m = HttpEventHandler.class.getDeclaredMethod("extractWebFluxResponseStatus", Object.class, ClassLoader.class);
+        m.setAccessible(true);
+        clearHttpEventHandlerCaches();
+
+        int out = (int) m.invoke(null, new Object(), getClass().getClassLoader());
+        assertEquals(-1, out);
+    }
+
     static class FakeRequest {
         private final Map<String, Object> attrs = new HashMap<>();
 
@@ -479,6 +502,24 @@ class HttpEventHandlerTest {
             setField.setAccessible(true);
             ((Map<?, ?>) getField.get(null)).clear();
             ((Map<?, ?>) setField.get(null)).clear();
+        } catch (Exception ignored) {
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void clearHttpEventHandlerCaches() {
+        try {
+            Class<?> c = HttpEventHandler.class;
+            String[] names = {
+                "HTTP_STATUS_CODE_METHOD_CACHE", "HTTP_STATUS_VALUE_METHOD_CACHE", "WC_EXCEPTION_STATUS_METHOD_CACHE",
+                "WF_GET_REQUEST_CACHE", "WF_GET_RESPONSE_CACHE", "WF_REQ_METHOD_CACHE",
+                "WF_REQ_URI_CACHE", "WF_REQ_HEADERS_CACHE", "WF_RESP_STATUS_CACHE"
+            };
+            for (String n : names) {
+                java.lang.reflect.Field f = c.getDeclaredField(n);
+                f.setAccessible(true);
+                ((Map<?, ?>) f.get(null)).clear();
+            }
         } catch (Exception ignored) {
         }
     }
