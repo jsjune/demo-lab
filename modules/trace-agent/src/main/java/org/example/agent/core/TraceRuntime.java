@@ -1,6 +1,12 @@
 package org.example.agent.core;
 
 import org.example.agent.config.AgentConfig;
+import org.example.agent.core.handler.AsyncEventHandler;
+import org.example.agent.core.handler.CacheEventHandler;
+import org.example.agent.core.handler.DbEventHandler;
+import org.example.agent.core.handler.HttpEventHandler;
+import org.example.agent.core.handler.IoEventHandler;
+import org.example.agent.core.handler.MqEventHandler;
 import org.example.common.TraceCategory;
 import org.example.common.TraceEvent;
 import org.example.common.TraceEventType;
@@ -17,9 +23,9 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class TraceRuntime {
 
-    static final String TRACE_MARKER = "__TRACE_TRACKING__";
-    static final String ATTR_TX_ID   = "__TRACE_TX_ID__";
-    static final String ATTR_SPAN_ID = "__TRACE_SPAN_ID__";
+    public static final String TRACE_MARKER = "__TRACE_TRACKING__";
+    public static final String ATTR_TX_ID   = "__TRACE_TX_ID__";
+    public static final String ATTR_SPAN_ID = "__TRACE_SPAN_ID__";
     private static final AtomicLong EVENT_SEQ = new AtomicLong(0);
     private static final ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
         GET_ATTR_CACHE = new ConcurrentHashMap<>();
@@ -124,11 +130,11 @@ public class TraceRuntime {
     }
 
     // ── Package-private: 핸들러 공유 팩토리 + 유틸 ───────────────────────
-    static String generateSpanId() {
+    public static String generateSpanId() {
         return System.currentTimeMillis() + "-" + java.util.UUID.randomUUID().toString().substring(0, 8);
     }
 
-    static TraceEvent buildEvent(String txId, TraceEventType type, TraceCategory category,
+    public static TraceEvent buildEvent(String txId, TraceEventType type, TraceCategory category,
                                  String target, Long durationMs, boolean success,
                                  Map<String, Object> extra, String spanId, String parentSpanId) {
         return new TraceEvent(AgentConfig.getServerName() + "-" + EVENT_SEQ.incrementAndGet(),
@@ -137,23 +143,23 @@ public class TraceRuntime {
                 extra != null ? extra : new HashMap<>());
     }
 
-    static TraceEvent createRootEvent(String txId, TraceEventType type, TraceCategory cat,
+    public static TraceEvent createRootEvent(String txId, TraceEventType type, TraceCategory cat,
                                       String target, Long durationMs, boolean success,
                                       Map<String, Object> extra, String spanId) {
         return buildEvent(txId, type, cat, target, durationMs, success, extra, spanId, null);
     }
 
-    static TraceEvent createChildEvent(String txId, TraceEventType type, TraceCategory cat,
+    public static TraceEvent createChildEvent(String txId, TraceEventType type, TraceCategory cat,
                                        String target, Long durationMs, boolean success,
                                        Map<String, Object> extra) {
         return buildEvent(txId, type, cat, target, durationMs, success, extra, generateSpanId(), SpanIdHolder.get());
     }
 
-    static void emit(TraceEventType type, TraceCategory cat, String target,
+    public static void emit(TraceEventType type, TraceCategory cat, String target,
                      Long durationMs, boolean success, Map<String, Object> extra) {
         safeRun(() -> { String txId = TxIdHolder.get(); if (txId != null) TcpSender.send(createChildEvent(txId, type, cat, target, durationMs, success, extra)); });
     }
 
-    static void safeRun(Runnable r) { try { r.run(); } catch (Throwable t) { AgentLogger.error("Runtime error", t); } }
-    static String truncate(String s) { return (s == null || s.length() <= 1000) ? s : s.substring(0, 1000) + "..."; }
+    public static void safeRun(Runnable r) { try { r.run(); } catch (Throwable t) { AgentLogger.error("Runtime error", t); } }
+    public static String truncate(String s) { return (s == null || s.length() <= 1000) ? s : s.substring(0, 1000) + "..."; }
 }

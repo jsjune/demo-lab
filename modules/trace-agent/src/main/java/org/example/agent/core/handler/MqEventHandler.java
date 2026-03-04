@@ -1,14 +1,21 @@
-package org.example.agent.core;
+package org.example.agent.core.handler;
 
+import org.example.agent.core.SpanIdHolder;
+import org.example.agent.core.TcpSender;
+import org.example.agent.core.TraceRuntime;
+import org.example.agent.core.TxIdGenerator;
+import org.example.agent.core.TxIdHolder;
 import org.example.common.TraceCategory;
 import org.example.common.TraceEventType;
 
 import java.util.HashMap;
 import java.util.Map;
 
-class MqEventHandler {
+public final class MqEventHandler {
 
-    static void onProduce(String brokerType, String topic, String key) {
+    private MqEventHandler() {}
+
+    public static void onProduce(String brokerType, String topic, String key) {
         TraceRuntime.safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;
@@ -19,7 +26,7 @@ class MqEventHandler {
         });
     }
 
-    static void onConsumeStart(String brokerType, String topic, String incomingTxId) {
+    public static void onConsumeStart(String brokerType, String topic, String incomingTxId) {
         TraceRuntime.safeRun(() -> {
             if (incomingTxId != null && !incomingTxId.isEmpty()) {
                 TxIdHolder.set(incomingTxId);
@@ -35,7 +42,7 @@ class MqEventHandler {
         });
     }
 
-    static void onConsumeEnd(String brokerType, String topic, long durationMs) {
+    public static void onConsumeEnd(String brokerType, String topic, long durationMs) {
         TraceRuntime.safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;
@@ -46,7 +53,7 @@ class MqEventHandler {
         });
     }
 
-    static void onConsumeError(Throwable t, String brokerType, String topic, long durationMs) {
+    public static void onConsumeError(Throwable t, String brokerType, String topic, long durationMs) {
         TraceRuntime.safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;

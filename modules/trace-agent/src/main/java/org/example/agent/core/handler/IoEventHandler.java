@@ -1,14 +1,19 @@
-package org.example.agent.core;
+package org.example.agent.core.handler;
 
+import org.example.agent.core.TcpSender;
+import org.example.agent.core.TraceRuntime;
+import org.example.agent.core.TxIdHolder;
 import org.example.common.TraceCategory;
 import org.example.common.TraceEventType;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-class IoEventHandler {
+public final class IoEventHandler {
 
-    static void onRead(String path, long sizeBytes, long durationMs, boolean success) {
+    private IoEventHandler() {}
+
+    public static void onRead(String path, long sizeBytes, long durationMs, boolean success) {
         TraceRuntime.safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;
@@ -19,7 +24,7 @@ class IoEventHandler {
         });
     }
 
-    static void onWrite(String path, long sizeBytes, long durationMs, boolean success) {
+    public static void onWrite(String path, long sizeBytes, long durationMs, boolean success) {
         TraceRuntime.safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;

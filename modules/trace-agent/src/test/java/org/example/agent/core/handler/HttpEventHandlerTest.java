@@ -1,5 +1,8 @@
-package org.example.agent.core;
+package org.example.agent.core.handler;
 
+import org.example.agent.core.SpanIdHolder;
+import org.example.agent.core.TcpSender;
+import org.example.agent.core.TxIdHolder;
 import org.example.common.TraceEvent;
 import org.example.common.TraceEventType;
 import org.junit.jupiter.api.*;

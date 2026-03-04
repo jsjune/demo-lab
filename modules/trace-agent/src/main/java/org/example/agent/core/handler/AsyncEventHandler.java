@@ -1,14 +1,21 @@
-package org.example.agent.core;
+package org.example.agent.core.handler;
 
+import org.example.agent.core.AgentLogger;
+import org.example.agent.core.SpanIdHolder;
+import org.example.agent.core.TcpSender;
+import org.example.agent.core.TraceRuntime;
+import org.example.agent.core.TxIdHolder;
 import org.example.common.TraceCategory;
 import org.example.common.TraceEventType;
 
-class AsyncEventHandler {
+public final class AsyncEventHandler {
+
+    private AsyncEventHandler() {}
 
     /**
      * @return 새로 생성한 spanId, txId가 없으면 null
      */
-    static String onStart(String taskName) {
+    public static String onStart(String taskName) {
         String txId = TxIdHolder.get();
         if (txId == null) return null;
         String spanId = TraceRuntime.generateSpanId();
@@ -19,7 +26,7 @@ class AsyncEventHandler {
         return spanId;
     }
 
-    static void onEnd(String taskName, String spanId, long durationMs) {
+    public static void onEnd(String taskName, String spanId, long durationMs) {
         String txId = TxIdHolder.get();
         if (txId == null || spanId == null) return;
         TcpSender.send(TraceRuntime.createRootEvent(txId, TraceEventType.ASYNC_END,

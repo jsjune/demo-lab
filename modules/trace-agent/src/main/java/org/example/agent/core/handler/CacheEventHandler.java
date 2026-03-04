@@ -1,14 +1,19 @@
-package org.example.agent.core;
+package org.example.agent.core.handler;
 
+import org.example.agent.core.TcpSender;
+import org.example.agent.core.TraceRuntime;
+import org.example.agent.core.TxIdHolder;
 import org.example.common.TraceCategory;
 import org.example.common.TraceEventType;
 
 import java.util.HashMap;
 import java.util.Map;
 
-class CacheEventHandler {
+public final class CacheEventHandler {
 
-    static void onGet(String key, boolean hit) {
+    private CacheEventHandler() {}
+
+    public static void onGet(String key, boolean hit) {
         TraceRuntime.safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;
@@ -20,7 +25,7 @@ class CacheEventHandler {
         });
     }
 
-    static void onSet(String key) {
+    public static void onSet(String key) {
         TraceRuntime.safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;
@@ -31,7 +36,7 @@ class CacheEventHandler {
         });
     }
 
-    static void onDel(String key) {
+    public static void onDel(String key) {
         TraceRuntime.safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;

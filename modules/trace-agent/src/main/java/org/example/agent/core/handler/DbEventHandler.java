@@ -1,5 +1,8 @@
-package org.example.agent.core;
+package org.example.agent.core.handler;
 
+import org.example.agent.core.TcpSender;
+import org.example.agent.core.TraceRuntime;
+import org.example.agent.core.TxIdHolder;
 import org.example.common.TraceCategory;
 import org.example.common.TraceEventType;
 
@@ -7,9 +10,11 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-class DbEventHandler {
+public final class DbEventHandler {
 
-    static void onStart(String sql, String dbHost) {
+    private DbEventHandler() {}
+
+    public static void onStart(String sql, String dbHost) {
         TraceRuntime.safeRun(() -> {
             Map<String, Object> extra = new HashMap<>();
             extra.put("sql", TraceRuntime.truncate(sql));
@@ -18,7 +23,7 @@ class DbEventHandler {
         });
     }
 
-    static void onEnd(String sql, long durationMs, String dbHost) {
+    public static void onEnd(String sql, long durationMs, String dbHost) {
         TraceRuntime.safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;
@@ -29,7 +34,7 @@ class DbEventHandler {
         });
     }
 
-    static void onError(Throwable t, String sql, long durationMs, String dbHost) {
+    public static void onError(Throwable t, String sql, long durationMs, String dbHost) {
         TraceRuntime.safeRun(() -> {
             String txId = TxIdHolder.get();
             if (txId == null) return;

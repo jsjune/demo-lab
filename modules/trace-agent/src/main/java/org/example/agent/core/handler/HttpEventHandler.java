@@ -1,6 +1,13 @@
-package org.example.agent.core;
+package org.example.agent.core.handler;
 
 import org.example.agent.config.AgentConfig;
+import org.example.agent.core.AgentLogger;
+import org.example.agent.core.ReactorContextHolder;
+import org.example.agent.core.SpanIdHolder;
+import org.example.agent.core.TcpSender;
+import org.example.agent.core.TraceRuntime;
+import org.example.agent.core.TxIdGenerator;
+import org.example.agent.core.TxIdHolder;
 import org.example.common.TraceCategory;
 import org.example.common.TraceEventType;
 
@@ -11,7 +18,9 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
-class HttpEventHandler {
+public final class HttpEventHandler {
+
+    private HttpEventHandler() {}
 
     // ── HTTP / WebFlux 전용 리플렉션 캐시 ─────────────────────────────────
     private static final ConcurrentHashMap<ClassLoader, Method>
@@ -35,7 +44,7 @@ class HttpEventHandler {
 
     // ── HTTP Inbound ──────────────────────────────────────────────────────
 
-    static void onInStart(Object request, String method, String path,
+    public static void onInStart(Object request, String method, String path,
                           String incomingTxId, String incomingSpanId, boolean forceTrace) {
         TraceRuntime.safeRun(() -> {
             long now = System.currentTimeMillis();
@@ -73,7 +82,7 @@ class HttpEventHandler {
         });
     }
 
-    static void onInEnd(String method, String path, int statusCode, long durationMs) {
+    public static void onInEnd(String method, String path, int statusCode, long durationMs) {
         TraceRuntime.safeRun(() -> {
             String txId = TxIdHolder.get(); if (txId == null) return;
             String spanId = SpanIdHolder.get();
@@ -86,7 +95,7 @@ class HttpEventHandler {
         });
     }
 
-    static void onInEndAsync(String txId, String spanId, String method,
+    public static void onInEndAsync(String txId, String spanId, String method,
                              String path, long startTime, Object request) {
         TraceRuntime.safeRun(() -> {
             if (request != null && Boolean.TRUE.equals(TraceRuntime.invokeGetAttribute(request, "__TRACE_FINISHED__"))) return;
@@ -101,7 +110,7 @@ class HttpEventHandler {
         });
     }
 
-    static void onInError(Throwable t, String method, String path, long durationMs) {
+    public static void onInError(Throwable t, String method, String path, long durationMs) {
         TraceRuntime.safeRun(() -> {
             String txId = TxIdHolder.get(); if (txId == null) return;
             String spanId = SpanIdHolder.get();
@@ -113,7 +122,7 @@ class HttpEventHandler {
         });
     }
 
-    static void registerFromRequest(Object request) {
+    public static void registerFromRequest(Object request) {
         if (request == null) return;
         TraceRuntime.safeRun(() -> {
             Object method = TraceRuntime.invokeGetAttribute(request, "__TRACE_METHOD__");
@@ -125,7 +134,7 @@ class HttpEventHandler {
         });
     }
 
-    static void register(Object request, String method, String path, long startTime) {
+    public static void register(Object request, String method, String path, long startTime) {
         TraceRuntime.safeRun(() -> {
             if (request == null) return;
             if (Boolean.TRUE.equals(TraceRuntime.invokeGetAttribute(request, "__TRACE_ASYNC_REGISTERED__"))) return;
@@ -186,7 +195,7 @@ class HttpEventHandler {
 
     // ── HTTP Outbound ──────────────────────────────────────────────────────
 
-    static void onOut(String method, String uri, int statusCode, long durationMs) {
+    public static void onOut(String method, String uri, int statusCode, long durationMs) {
         TraceRuntime.safeRun(() -> {
             String txId = TxIdHolder.get(); if (txId == null) return;
             Map<String, Object> extra = new HashMap<>();
@@ -196,7 +205,7 @@ class HttpEventHandler {
         });
     }
 
-    static void onOutError(Throwable t, String method, String url, long durationMs) {
+    public static void onOutError(Throwable t, String method, String url, long durationMs) {
         TraceRuntime.safeRun(() -> {
             String txId = TxIdHolder.get(); if (txId == null) return;
             Map<String, Object> extra = new LinkedHashMap<>();
@@ -209,7 +218,7 @@ class HttpEventHandler {
 
     // ── WebClient / WebFlux ───────────────────────────────────────────────
 
-    static Object wrapWebClient(Object mono, String method, String uri) {
+    public static Object wrapWebClient(Object mono, String method, String uri) {
         try {
             String txId = TxIdHolder.get(); if (txId == null) return mono;
             final String capturedTxId = txId;
@@ -233,7 +242,7 @@ class HttpEventHandler {
         } catch (Throwable t) { return mono; }
     }
 
-    static void onWfStart(Object exchange) {
+    public static void onWfStart(Object exchange) {
         TraceRuntime.safeRun(() -> {
             ClassLoader cl = exchange.getClass().getClassLoader();
             Object request = resolveAndInvoke(WF_GET_REQUEST_CACHE, cl,
@@ -261,7 +270,7 @@ class HttpEventHandler {
         });
     }
 
-    static Object wrapWfHandle(Object mono, Object exchange, long startTimeMs) {
+    public static Object wrapWfHandle(Object mono, Object exchange, long startTimeMs) {
         try {
             String txId = TxIdHolder.get(); if (txId == null) return mono;
             final String capturedTxId = txId;
@@ -284,7 +293,7 @@ class HttpEventHandler {
         } catch (Throwable t) { return mono; }
     }
 
-    static void onWfSyncError() { TxIdHolder.clear(); SpanIdHolder.clear(); }
+    public static void onWfSyncError() { TxIdHolder.clear(); SpanIdHolder.clear(); }
 
     // ── Private helpers ───────────────────────────────────────────────────
 
