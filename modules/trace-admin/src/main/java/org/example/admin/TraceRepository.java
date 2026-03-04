@@ -94,7 +94,7 @@ public class TraceRepository {
                      "LEFT JOIN trace_events in_ev ON out_ev.tx_id = in_ev.tx_id " +
                      "  AND ((out_ev.type = 'HTTP_OUT' AND in_ev.type = 'HTTP_IN_START') " +
                      "       OR (out_ev.type = 'MQ_PRODUCE' AND in_ev.type = 'MQ_CONSUME_START')) " +
-                     "WHERE out_ev.type IN ('HTTP_OUT', 'MQ_PRODUCE', 'DB_QUERY_START', 'CACHE_HIT', 'CACHE_SET')";
+                     "WHERE out_ev.type IN ('HTTP_OUT', 'MQ_PRODUCE', 'DB_QUERY', 'CACHE_HIT', 'CACHE_SET')";
         
         return jdbcTemplate.query(sql, (rs, rowNum) -> new ServiceLink(
                 rs.getString("caller"),

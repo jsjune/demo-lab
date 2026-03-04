@@ -6,15 +6,22 @@ import org.example.agent.core.TxIdHolder;
 import org.example.common.TraceCategory;
 import org.example.common.TraceEvent;
 import org.example.common.TraceEventType;
-import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.mockStatic;
 
 @DisplayName("코어: DbEventHandler 단위 테스트")
 class DbEventHandlerTest {
@@ -32,6 +39,7 @@ class DbEventHandlerTest {
         });
         TxIdHolder.clear();
         SpanIdHolder.clear();
+        DbEventHandler.resetDepthForTest();
     }
 
     @AfterEach
@@ -39,6 +47,7 @@ class DbEventHandlerTest {
         tcpMock.close();
         TxIdHolder.clear();
         SpanIdHolder.clear();
+        DbEventHandler.resetDepthForTest();
     }
 
     @Test
@@ -49,65 +58,75 @@ class DbEventHandlerTest {
     }
 
     @Test
-    @DisplayName("T-02: onStart — DB_QUERY_START 이벤트 전송")
-    void onStart_withTxId_emitsDbQueryStartEvent() {
+    @DisplayName("T-02: onStart만으로는 이벤트를 전송하지 않는다")
+    void onStart_only_noEvent() {
         TxIdHolder.set("tx-001");
         DbEventHandler.onStart("SELECT 1", "db-host");
-
-        assertEquals(1, capturedEvents.size());
-        TraceEvent e = capturedEvents.get(0);
-        assertEquals(TraceEventType.DB_QUERY_START, e.type());
-        assertEquals(TraceCategory.DB, e.category());
-        assertEquals("db-host", e.target());
-        assertEquals("SELECT 1", e.extraInfo().get("sql"));
+        assertTrue(capturedEvents.isEmpty());
     }
 
     @Test
-    @DisplayName("T-03: onEnd — DB_QUERY_END 이벤트 전송, duration 포함")
-    void onEnd_emitsDbQueryEndWithDuration() {
+    @DisplayName("T-03: onStart/onEnd — DB_QUERY 성공 이벤트 1건 전송")
+    void onEnd_emitsSingleSuccessEvent() {
         TxIdHolder.set("tx-001");
         SpanIdHolder.set("span-001");
+
+        DbEventHandler.onStart("SELECT 1", "db-host");
         DbEventHandler.onEnd("SELECT 1", 42L, "db-host");
 
         assertEquals(1, capturedEvents.size());
         TraceEvent e = capturedEvents.get(0);
-        assertEquals(TraceEventType.DB_QUERY_END, e.type());
-        assertEquals(42L, e.durationMs());
+        assertEquals(TraceEventType.DB_QUERY, e.type());
+        assertEquals(TraceCategory.DB, e.category());
         assertTrue(e.success());
+        assertEquals(42L, e.durationMs());
+        assertEquals("SELECT 1", e.extraInfo().get("sql"));
     }
 
     @Test
-    @DisplayName("T-04: onStart — 1001자 SQL은 '...' 접미사로 잘림")
-    void onStart_longSql_truncated() {
-        TxIdHolder.set("tx-001");
-        String longSql = "X".repeat(1001);
-        DbEventHandler.onStart(longSql, "db-host");
-
-        assertEquals(1, capturedEvents.size());
-        String sql = (String) capturedEvents.get(0).extraInfo().get("sql");
-        assertNotNull(sql);
-        assertTrue(sql.length() <= 1003, "Truncated sql should be <= 1003 chars");
-        assertTrue(sql.endsWith("..."));
-    }
-
-    @Test
-    @DisplayName("T-05: onError — 실패와 errorType이 기록되어야 한다")
-    void onError_recordsFailureReason() {
+    @DisplayName("T-04: onError — 실패 이벤트 1건 + 종합 오류 필드 기록")
+    void onError_recordsAggregatedFailure() {
         TxIdHolder.set("tx-001");
         SpanIdHolder.set("span-001");
+        DbEventHandler.onStart("SELECT X", "db-host");
 
         DbEventHandler.onError(new IllegalArgumentException("bad-sql"), "SELECT X", 12L, "db-host");
 
         assertEquals(1, capturedEvents.size());
         TraceEvent e = capturedEvents.get(0);
-        assertEquals(TraceEventType.DB_QUERY_END, e.type());
+        assertEquals(TraceEventType.DB_QUERY, e.type());
         assertFalse(e.success());
         assertEquals("IllegalArgumentException", e.extraInfo().get("errorType"));
         assertEquals("bad-sql", e.extraInfo().get("errorMessage"));
+        assertEquals("java.lang.IllegalArgumentException", e.extraInfo().get("errorClass"));
+        assertEquals("java.lang.IllegalArgumentException", e.extraInfo().get("rootCauseClass"));
+        assertEquals("bad-sql", e.extraInfo().get("rootCauseMessage"));
+        assertTrue(String.valueOf(e.extraInfo().get("chainSummary")).contains("IllegalArgumentException"));
+        assertEquals(0, e.extraInfo().get("suppressedCount"));
     }
 
     @Test
-    @DisplayName("T-06: onStart/onEnd — blank SQL(connection noise)은 전송하지 않아야 한다")
+    @DisplayName("T-05: SQLException 체인인 경우 sqlState/vendorCode 기록")
+    void onError_recordsSqlExceptionDetails() {
+        TxIdHolder.set("tx-001");
+        SpanIdHolder.set("span-001");
+        DbEventHandler.onStart("SELECT 1", "db-host");
+
+        SQLException sqlException = new SQLException("db down", "08001", 1001);
+        RuntimeException wrapped = new RuntimeException("wrapped", sqlException);
+        DbEventHandler.onError(wrapped, "SELECT 1", 10L, "db-host");
+
+        assertEquals(1, capturedEvents.size());
+        TraceEvent e = capturedEvents.get(0);
+        assertFalse(e.success());
+        assertEquals("SQLException", e.extraInfo().get("errorType"));
+        assertEquals("db down", e.extraInfo().get("errorMessage"));
+        assertEquals("08001", e.extraInfo().get("sqlState"));
+        assertEquals("1001", e.extraInfo().get("vendorCode"));
+    }
+
+    @Test
+    @DisplayName("T-06: blank SQL(connection noise) 성공 케이스는 전송하지 않는다")
     void onStartAndEnd_blankSql_skip() {
         TxIdHolder.set("tx-001");
         SpanIdHolder.set("span-001");
@@ -119,16 +138,36 @@ class DbEventHandlerTest {
     }
 
     @Test
-    @DisplayName("T-07: onError — blank SQL이어도 에러 이벤트는 전송해야 한다")
+    @DisplayName("T-07: blank SQL이어도 에러는 전송한다")
     void onError_blankSql_stillEmits() {
         TxIdHolder.set("tx-001");
         SpanIdHolder.set("span-001");
+        DbEventHandler.onStart(" ", "db-host");
 
         DbEventHandler.onError(new RuntimeException("connection failed"), " ", 5L, "db-host");
 
         assertEquals(1, capturedEvents.size());
         TraceEvent e = capturedEvents.get(0);
-        assertEquals(TraceEventType.DB_QUERY_END, e.type());
+        assertEquals(TraceEventType.DB_QUERY, e.type());
         assertFalse(e.success());
+        assertNotNull(e.extraInfo().get("errorMessage"));
+    }
+
+    @Test
+    @DisplayName("T-08: 중첩 DB 호출은 최상위 단일 완료 이벤트만 전송")
+    void nestedCalls_emitOnlyOneTopLevelEnd() {
+        TxIdHolder.set("tx-001");
+        SpanIdHolder.set("span-001");
+
+        DbEventHandler.onStart("SELECT outer", "db-host");
+        DbEventHandler.onStart("SELECT inner", "db-host");
+        DbEventHandler.onError(new RuntimeException("inner"), "SELECT inner", 1L, "db-host");
+        DbEventHandler.onEnd("SELECT outer", 2L, "db-host");
+
+        assertEquals(1, capturedEvents.size());
+        TraceEvent end = capturedEvents.get(0);
+        assertEquals(TraceEventType.DB_QUERY, end.type());
+        assertTrue(end.success());
+        assertEquals("SELECT outer", end.extraInfo().get("sql"));
     }
 }

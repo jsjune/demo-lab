@@ -72,51 +72,6 @@ class JdbcPluginAdviceTest {
     }
 
     @Test
-    @DisplayName("Statement.execute(sql) 진입 시 onDbQueryStart가 호출되어야 한다")
-    void testJdbcStatementAdvice_sqlArg_onMethodEnter() {
-        MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-        JdbcPlugin.JdbcStatementAdvice advice =
-            new JdbcPlugin.JdbcStatementAdvice(mv, Opcodes.ACC_PUBLIC, "execute", "(Ljava/lang/String;)Z");
-
-        advice.onMethodEnter();
-
-        verify(mv, atLeastOnce()).visitMethodInsn(
-            eq(Opcodes.INVOKESTATIC),
-            eq("org/example/agent/core/TraceRuntime"),
-            eq("onDbQueryStart"),
-            anyString(),
-            eq(false)
-        );
-    }
-
-    @Test
-    @DisplayName("Connection.prepareStatement(sql) 예외 종료 시 onDbQueryStart/onDbQueryError가 호출되어야 한다")
-    void testJdbcPrepareAdvice_throw_callsStartAndError() {
-        MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-        JdbcPlugin.JdbcPrepareAdvice advice =
-            new JdbcPlugin.JdbcPrepareAdvice(mv, Opcodes.ACC_PUBLIC, "prepareStatement",
-                "(Ljava/lang/String;)Ljava/sql/PreparedStatement;");
-
-        advice.onMethodEnter();
-        advice.onMethodExit(Opcodes.ATHROW);
-
-        verify(mv, atLeastOnce()).visitMethodInsn(
-            eq(Opcodes.INVOKESTATIC),
-            eq("org/example/agent/core/TraceRuntime"),
-            eq("onDbQueryStart"),
-            anyString(),
-            eq(false)
-        );
-        verify(mv, atLeastOnce()).visitMethodInsn(
-            eq(Opcodes.INVOKESTATIC),
-            eq("org/example/agent/core/TraceRuntime"),
-            eq("onDbQueryError"),
-            eq("(Ljava/lang/Throwable;Ljava/lang/String;JLjava/lang/String;)V"),
-            eq(false)
-        );
-    }
-
-    @Test
     @DisplayName("@TraceIgnore 애노테이션이면 DB 시작/종료 호출을 삽입하지 않아야 한다")
     void testJdbcStatementAdvice_traceIgnore_skips() {
         MethodVisitor mv = Mockito.mock(MethodVisitor.class);

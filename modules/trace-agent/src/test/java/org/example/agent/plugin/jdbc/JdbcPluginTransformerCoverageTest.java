@@ -66,22 +66,9 @@ class JdbcPluginTransformerCoverageTest {
     void pluginMetadata_andTargetPrefixes() {
         JdbcPlugin p = new JdbcPlugin();
         assertEquals("jdbc", p.pluginId());
-        assertEquals(2, p.transformers().size());
+        assertEquals(1, p.transformers().size());
         List<String> prefixes = p.targetClassPrefixes();
         assertTrue(prefixes.stream().anyMatch(s -> s.contains("jdbc")));
-    }
-
-    @Test
-    void jdbcConnectionPrepareTransformer_transformsPrepareStatement() throws Exception {
-        byte[] original = AsmTestUtils.classWithMethods(
-            "org/postgresql/jdbc/PgConnection",
-            AsmTestUtils.MethodSpec.of("prepareStatement", "(Ljava/lang/String;)Ljava/sql/PreparedStatement;"));
-
-        JdbcPlugin.JdbcConnectionPrepareTransformer t = new JdbcPlugin.JdbcConnectionPrepareTransformer();
-        byte[] out = t.transform(getClass().getClassLoader(), "org/postgresql/jdbc/PgConnection",
-            null, null, original);
-
-        assertNotNull(out);
     }
 
     @Test

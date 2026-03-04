@@ -42,17 +42,15 @@ public class JdbcPlugin implements TracerPlugin {
 
     @Override
     public List<ClassFileTransformer> transformers() {
-        return Arrays.asList(
-            new JdbcStatementTransformer(),
-            new JdbcConnectionPrepareTransformer()
-        );
+        return Arrays.asList(new JdbcStatementTransformer());
     }
 
     static class JdbcStatementTransformer implements ClassFileTransformer {
         @Override
         public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classfileBuffer) {
             String normalizedName = className == null ? "" : className.replace('.', '/');
-            if (!normalizedName.contains("Statement")) return null;
+            // Keep only PreparedStatement.execute* instrumentation to avoid duplicate chains.
+            if (!normalizedName.contains("PreparedStatement")) return null;
             try {
                 ClassReader reader = new ClassReader(classfileBuffer);
                 ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
@@ -61,32 +59,8 @@ public class JdbcPlugin implements TracerPlugin {
                     public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
                         MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
                         if (("execute".equals(name) || "executeQuery".equals(name) || "executeUpdate".equals(name) || "executeLargeUpdate".equals(name))
-                            && (descriptor.startsWith("()") || descriptor.startsWith("(Ljava/lang/String;"))) {
+                            && descriptor.startsWith("()")) {
                             return new JdbcStatementAdvice(mv, access, name, descriptor);
-                        }
-                        return mv;
-                    }
-                }, ClassReader.EXPAND_FRAMES);
-                return writer.toByteArray();
-            } catch (Exception e) { return null; }
-        }
-    }
-
-    static class JdbcConnectionPrepareTransformer implements ClassFileTransformer {
-        @Override
-        public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classfileBuffer) {
-            String normalizedName = className == null ? "" : className.replace('.', '/');
-            if (!normalizedName.contains("Connection")) return null;
-            try {
-                ClassReader reader = new ClassReader(classfileBuffer);
-                ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
-                reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
-                    @Override
-                    public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
-                        MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
-                        if (("prepareStatement".equals(name) || "prepareCall".equals(name))
-                            && descriptor.startsWith("(Ljava/lang/String;")) {
-                            return new JdbcPrepareAdvice(mv, access, name, descriptor);
                         }
                         return mv;
                     }
@@ -100,11 +74,9 @@ public class JdbcPlugin implements TracerPlugin {
         private boolean ignored = false;
         private int sqlId;
         private int dbHostId;
-        private final boolean sqlFromFirstArg;
 
         protected JdbcStatementAdvice(MethodVisitor mv, int access, String name, String descriptor) {
             super(Opcodes.ASM9, mv, access, name, descriptor);
-            this.sqlFromFirstArg = descriptor.startsWith("(Ljava/lang/String;");
         }
 
         @Override
@@ -122,12 +94,8 @@ public class JdbcPlugin implements TracerPlugin {
 
             // sql 로컬 변수 할당 및 저장 — onMethodExit에서 ALOAD로 재사용
             sqlId = newLocal(Type.getType(String.class));
-            if (sqlFromFirstArg) {
-                mv.visitVarInsn(ALOAD, 1);
-            } else {
-                mv.visitVarInsn(ALOAD, 0);
-                mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/plugin/jdbc/JdbcPlugin", "extractSql", "(Ljava/lang/Object;)Ljava/lang/String;", false);
-            }
+            mv.visitVarInsn(ALOAD, 0);
+            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/plugin/jdbc/JdbcPlugin", "extractSql", "(Ljava/lang/Object;)Ljava/lang/String;", false);
             mv.visitVarInsn(ASTORE, sqlId);
 
             // dbHost 로컬 변수 할당 및 저장 — reflection 3단 체인 비용을 onMethodEnter에서 1회만 지불
@@ -159,46 +127,6 @@ public class JdbcPlugin implements TracerPlugin {
             mv.visitVarInsn(ALOAD, dbHostId);       // 저장된 dbHost 재사용
             mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onDbQueryEnd",
                 "(Ljava/lang/String;JLjava/lang/String;)V", false);
-        }
-    }
-
-    static class JdbcPrepareAdvice extends BaseAdvice {
-        private int sqlId;
-        private int dbHostId;
-
-        protected JdbcPrepareAdvice(MethodVisitor mv, int access, String name, String descriptor) {
-            super(Opcodes.ASM9, mv, access, name, descriptor);
-        }
-
-        @Override
-        protected void onMethodEnter() {
-            captureStartTime();
-            sqlId = newLocal(Type.getType(String.class));
-            mv.visitVarInsn(ALOAD, 1);
-            mv.visitVarInsn(ASTORE, sqlId);
-
-            dbHostId = newLocal(Type.getType(String.class));
-            mv.visitVarInsn(ALOAD, 0);
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/plugin/jdbc/JdbcPlugin", "extractDbHostFromConnection", "(Ljava/lang/Object;)Ljava/lang/String;", false);
-            mv.visitVarInsn(ASTORE, dbHostId);
-        }
-
-        @Override
-        protected void onMethodExit(int opcode) {
-            if (opcode != ATHROW) return;
-
-            // Prepare 단계 실패도 DB_QUERY_START/END(fail) 페어로 맞춘다.
-            mv.visitVarInsn(ALOAD, sqlId);
-            mv.visitVarInsn(ALOAD, dbHostId);
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onDbQueryStart",
-                "(Ljava/lang/String;Ljava/lang/String;)V", false);
-
-            mv.visitInsn(DUP);
-            mv.visitVarInsn(ALOAD, sqlId);
-            calculateDurationAndPush();
-            mv.visitVarInsn(ALOAD, dbHostId);
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onDbQueryError",
-                "(Ljava/lang/Throwable;Ljava/lang/String;JLjava/lang/String;)V", false);
         }
     }
 

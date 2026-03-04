@@ -70,8 +70,7 @@ class TraceRuntimeTypeCategoryContractTest {
         TraceRuntime.onDbQueryEnd("select 1", 2L, "h2:mem:test");
         TraceRuntime.onHttpInEnd("GET", "/contract/db", 200, 9L);
 
-        assertEvent(TraceEventType.DB_QUERY_START, TraceCategory.DB);
-        assertEvent(TraceEventType.DB_QUERY_END, TraceCategory.DB);
+        assertEvent(TraceEventType.DB_QUERY, TraceCategory.DB);
     }
 
     @Test

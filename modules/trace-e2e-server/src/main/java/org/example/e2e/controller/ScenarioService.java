@@ -126,11 +126,29 @@ public class ScenarioService {
 
     public String runDbFail() {
         try {
-            // Force PreparedStatement execute-time SQL error path for DB_QUERY_END(fail).
+            // Force PreparedStatement execute-time SQL error path for DB_QUERY(fail).
             jdbcTemplate.queryForObject("SELECT CAST(? AS INT)", Integer.class, "not-a-number");
         } catch (Exception ignored) {
         }
         return "db_fail";
+    }
+
+    public String runDbFailStatementSyntax() {
+        try {
+            // PreparedStatement.execute* path with execute-time numeric range overflow.
+            jdbcTemplate.queryForObject("SELECT CAST(? AS TINYINT)", Integer.class, 1000);
+        } catch (Exception ignored) {
+        }
+        return "db_fail_statement_syntax";
+    }
+
+    public String runDbFailPrepareSyntax() {
+        try {
+            // PreparedStatement.execute* path with execute-time arithmetic failure.
+            jdbcTemplate.queryForObject("SELECT ? / 0", Integer.class, 1);
+        } catch (Exception ignored) {
+        }
+        return "db_fail_prepare_syntax";
     }
 
     public String runCacheSuccess() {

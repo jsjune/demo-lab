@@ -76,6 +76,16 @@ public class TestScenarioController {
         return scenarioService.runDbFail();
     }
 
+    @GetMapping("/db/fail-statement-syntax")
+    public String dbFailStatementSyntax() {
+        return scenarioService.runDbFailStatementSyntax();
+    }
+
+    @GetMapping("/db/fail-prepare-syntax")
+    public String dbFailPrepareSyntax() {
+        return scenarioService.runDbFailPrepareSyntax();
+    }
+
     @GetMapping("/cache/success")
     public String cacheSuccess() {
         return scenarioService.runCacheSuccess();

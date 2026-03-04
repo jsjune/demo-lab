@@ -86,7 +86,10 @@ class TraceRuntimeTest {
             String rootSpanId = SpanIdHolder.get();
             TraceRuntime.onDbQueryStart("SELECT 1", "localhost");
             TraceRuntime.onDbQueryEnd("SELECT 1", 5L, "localhost");
-            TraceEvent dbEvent = capturedEvents.get(2);
+            TraceEvent dbEvent = capturedEvents.stream()
+                .filter(e -> e.type() == TraceEventType.DB_QUERY)
+                .findFirst()
+                .orElseThrow();
             assertEquals(rootSpanId, dbEvent.parentSpanId());
         }
 

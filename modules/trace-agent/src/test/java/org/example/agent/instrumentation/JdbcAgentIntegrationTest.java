@@ -139,44 +139,6 @@ class JdbcAgentIntegrationTest extends ByteBuddyIntegrationTest {
         }
     }
 
-    /**
-     * Statement(sql) 경로 케이스용.
-     */
-    public static class FakeStatement {
-        private final String jdbcUrl;
-
-        public FakeStatement(String jdbcUrl) {
-            this.jdbcUrl = jdbcUrl;
-        }
-
-        public boolean execute(String sql) {
-            return true;
-        }
-
-        public FakeDbConnection getConnection() {
-            return new FakeDbConnection(jdbcUrl);
-        }
-    }
-
-    /**
-     * prepareStatement(sql) 예외 경로 케이스용.
-     */
-    public static class ThrowingConnection {
-        private final String jdbcUrl;
-
-        public ThrowingConnection(String jdbcUrl) {
-            this.jdbcUrl = jdbcUrl;
-        }
-
-        public Object prepareStatement(String sql) {
-            throw new RuntimeException("prepare failed");
-        }
-
-        public FakeDbMeta getMetaData() {
-            return new FakeDbMeta(jdbcUrl);
-        }
-    }
-
     // -----------------------------------------------------------------------
     // Tests
     // -----------------------------------------------------------------------
@@ -349,60 +311,4 @@ class JdbcAgentIntegrationTest extends ByteBuddyIntegrationTest {
         }
     }
 
-    @Test
-    @DisplayName("Statement.execute(sql) 정상 종료 시 sql 인자로 onDbQueryStart/onDbQueryEnd가 호출되어야 한다")
-    void statementExecute_sql인자_정상종료_추적되어야한다() throws Exception {
-        JdbcPlugin plugin = new JdbcPlugin();
-        ClassFileTransformer transformer = plugin.transformers().get(0);
-        Class<?> cls = transformAndLoad(FakeStatement.class, transformer);
-
-        Object instance = cls.getDeclaredConstructor(String.class)
-            .newInstance("jdbc:mysql://localhost:3306/testdb");
-        Method method = cls.getDeclaredMethod("execute", String.class);
-        method.setAccessible(true);
-
-        try (MockedStatic<TraceRuntime> mock = mockStatic(TraceRuntime.class)) {
-            method.invoke(instance, "SELECT 42");
-
-            mock.verify(
-                () -> TraceRuntime.onDbQueryStart(eq("SELECT 42"), eq("mysql://localhost:3306")),
-                times(1)
-            );
-            mock.verify(
-                () -> TraceRuntime.onDbQueryEnd(eq("SELECT 42"), anyLong(), eq("mysql://localhost:3306")),
-                times(1)
-            );
-        }
-    }
-
-    @Test
-    @DisplayName("prepareStatement(sql) 예외 발생 시 onDbQueryStart/onDbQueryError가 호출되어야 한다")
-    void prepareStatement_예외발생_onDbQueryError가호출되어야한다() throws Exception {
-        JdbcPlugin plugin = new JdbcPlugin();
-        ClassFileTransformer transformer = plugin.transformers().get(1);
-        Class<?> cls = transformAndLoad(ThrowingConnection.class, transformer);
-
-        Object instance = cls.getDeclaredConstructor(String.class)
-            .newInstance("jdbc:mysql://localhost:3306/testdb");
-        Method method = cls.getDeclaredMethod("prepareStatement", String.class);
-        method.setAccessible(true);
-
-        try (MockedStatic<TraceRuntime> mock = mockStatic(TraceRuntime.class)) {
-            assertThrows(InvocationTargetException.class, () -> method.invoke(instance, "SELECT bad"));
-
-            mock.verify(
-                () -> TraceRuntime.onDbQueryStart(eq("SELECT bad"), eq("mysql://localhost:3306")),
-                times(1)
-            );
-            mock.verify(
-                () -> TraceRuntime.onDbQueryError(
-                    any(RuntimeException.class), eq("SELECT bad"), anyLong(), eq("mysql://localhost:3306")),
-                times(1)
-            );
-            mock.verify(
-                () -> TraceRuntime.onDbQueryEnd(anyString(), anyLong(), anyString()),
-                never()
-            );
-        }
-    }
 }
