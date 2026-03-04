@@ -30,9 +30,9 @@ class JdbcPluginTransformerCoverageTest {
 
     @Test
     void jdbcStatementTransformer_nonStatement_returnsNull() throws Exception {
-        byte[] original = AsmTestUtils.classWithMethods("com/example/NotStatement");
+        byte[] original = AsmTestUtils.classWithMethods("com/example/NonSqlClass");
         JdbcPlugin.JdbcStatementTransformer t = new JdbcPlugin.JdbcStatementTransformer();
-        assertNull(t.transform(getClass().getClassLoader(), "com/example/NotStatement", null, null, original));
+        assertNull(t.transform(getClass().getClassLoader(), "com/example/NonSqlClass", null, null, original));
     }
 
     @Test
@@ -66,9 +66,22 @@ class JdbcPluginTransformerCoverageTest {
     void pluginMetadata_andTargetPrefixes() {
         JdbcPlugin p = new JdbcPlugin();
         assertEquals("jdbc", p.pluginId());
-        assertEquals(1, p.transformers().size());
+        assertEquals(2, p.transformers().size());
         List<String> prefixes = p.targetClassPrefixes();
         assertTrue(prefixes.stream().anyMatch(s -> s.contains("jdbc")));
+    }
+
+    @Test
+    void jdbcConnectionPrepareTransformer_transformsPrepareStatement() throws Exception {
+        byte[] original = AsmTestUtils.classWithMethods(
+            "org/postgresql/jdbc/PgConnection",
+            AsmTestUtils.MethodSpec.of("prepareStatement", "(Ljava/lang/String;)Ljava/sql/PreparedStatement;"));
+
+        JdbcPlugin.JdbcConnectionPrepareTransformer t = new JdbcPlugin.JdbcConnectionPrepareTransformer();
+        byte[] out = t.transform(getClass().getClassLoader(), "org/postgresql/jdbc/PgConnection",
+            null, null, original);
+
+        assertNotNull(out);
     }
 
     @Test

@@ -105,4 +105,30 @@ class DbEventHandlerTest {
         assertEquals("IllegalArgumentException", e.extraInfo().get("errorType"));
         assertEquals("bad-sql", e.extraInfo().get("errorMessage"));
     }
+
+    @Test
+    @DisplayName("T-06: onStart/onEnd — blank SQL(connection noise)은 전송하지 않아야 한다")
+    void onStartAndEnd_blankSql_skip() {
+        TxIdHolder.set("tx-001");
+        SpanIdHolder.set("span-001");
+
+        DbEventHandler.onStart("   ", "db-host");
+        DbEventHandler.onEnd("", 3L, "db-host");
+
+        assertTrue(capturedEvents.isEmpty());
+    }
+
+    @Test
+    @DisplayName("T-07: onError — blank SQL이어도 에러 이벤트는 전송해야 한다")
+    void onError_blankSql_stillEmits() {
+        TxIdHolder.set("tx-001");
+        SpanIdHolder.set("span-001");
+
+        DbEventHandler.onError(new RuntimeException("connection failed"), " ", 5L, "db-host");
+
+        assertEquals(1, capturedEvents.size());
+        TraceEvent e = capturedEvents.get(0);
+        assertEquals(TraceEventType.DB_QUERY_END, e.type());
+        assertFalse(e.success());
+    }
 }

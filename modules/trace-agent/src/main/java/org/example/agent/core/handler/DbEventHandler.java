@@ -17,6 +17,7 @@ public final class DbEventHandler {
 
     public static void onStart(String sql, String dbHost) {
         TraceRuntime.safeRun(() -> {
+            if (isConnectionOnlySql(sql)) return;
             Map<String, Object> extra = new HashMap<>();
             extra.put("sql", TraceRuntime.truncate(sql));
             AgentLogger.debug("[TRACE][DB][DB_QUERY_START] txId=" + TxIdHolder.get()
@@ -28,6 +29,7 @@ public final class DbEventHandler {
 
     public static void onEnd(String sql, long durationMs, String dbHost) {
         TraceRuntime.safeRun(() -> {
+            if (isConnectionOnlySql(sql)) return;
             String txId = TxIdHolder.get();
             if (txId == null) return;
             Map<String, Object> extra = new HashMap<>();
@@ -54,5 +56,11 @@ public final class DbEventHandler {
             TcpSender.send(TraceRuntime.createChildEvent(txId, TraceEventType.DB_QUERY_END,
                     TraceCategory.DB, dbHost, durationMs, false, extra));
         });
+    }
+
+    // Empty/blank SQL is usually connection/driver internal noise.
+    // Keep only error events for this class of DB activity.
+    private static boolean isConnectionOnlySql(String sql) {
+        return sql == null || sql.trim().isEmpty();
     }
 }

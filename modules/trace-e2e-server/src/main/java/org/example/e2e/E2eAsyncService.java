@@ -18,4 +18,9 @@ public class E2eAsyncService {
         out.put("status", "ok");
         return CompletableFuture.completedFuture(out);
     }
+
+    @Async("e2eExecutor")
+    public CompletableFuture<Map<String, Object>> runAsyncFail(String label) {
+        throw new IllegalStateException("forced-async-failure:" + label);
+    }
 }

@@ -7,7 +7,15 @@ plugins {
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-webflux'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jdbc'
+    implementation 'org.springframework.kafka:spring-kafka'
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    runtimeOnly 'com.h2database:h2'
+
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.kafka:spring-kafka-test'
+    testImplementation project(':modules:trace-common')
+    testImplementation 'com.fasterxml.jackson.core:jackson-databind'
 }
 
 bootRun {
@@ -20,4 +28,14 @@ bootRun {
 
 test {
     useJUnitPlatform()
+    dependsOn ':modules:trace-agent:shadowJar'
+    
+    // Keep collector port fixed so the agent can resolve it during premain.
+    jvmArgs "-javaagent:${project.rootDir}/modules/trace-agent/build/libs/trace-agent-0.0.1-SNAPSHOT.jar",
+             "-Dtrace.agent.server-name=trace-e2e-test",
+             "-Dtrace.agent.collector.host=127.0.0.1",
+             "-Dtrace.agent.collector.port=19200",
+             "-Dtrace.agent.sampling.rate=1.0",
+             "-Dtrace.agent.plugin.cache.enabled=true",
+             "-Dtrace.agent.plugin.mq.enabled=true"
 }
