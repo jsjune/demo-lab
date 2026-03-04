@@ -71,4 +71,30 @@ class IoEventHandlerTest {
         assertEquals(1, capturedEvents.size());
         assertEquals("unknown-file", capturedEvents.get(0).target());
     }
+
+    @Test
+    @DisplayName("T-04: onReadError — 실패 원인(errorType)을 기록해야 한다")
+    void onReadError_recordsFailureReason() {
+        IoEventHandler.onReadError("/tmp/in.txt", 12L, 2L, new IllegalStateException("io-fail"));
+
+        assertEquals(1, capturedEvents.size());
+        TraceEvent e = capturedEvents.get(0);
+        assertEquals(TraceEventType.FILE_READ, e.type());
+        assertFalse(e.success());
+        assertEquals("IllegalStateException", e.extraInfo().get("errorType"));
+        assertEquals("io-fail", e.extraInfo().get("errorMessage"));
+    }
+
+    @Test
+    @DisplayName("T-05: onWriteError — 실패 원인(errorType)을 기록해야 한다")
+    void onWriteError_recordsFailureReason() {
+        IoEventHandler.onWriteError("/tmp/out.txt", 20L, 3L, new RuntimeException("io-fail"));
+
+        assertEquals(1, capturedEvents.size());
+        TraceEvent e = capturedEvents.get(0);
+        assertEquals(TraceEventType.FILE_WRITE, e.type());
+        assertFalse(e.success());
+        assertEquals("RuntimeException", e.extraInfo().get("errorType"));
+        assertEquals("io-fail", e.extraInfo().get("errorMessage"));
+    }
 }

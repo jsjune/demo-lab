@@ -27,6 +27,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
 import java.util.function.Predicate;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -203,7 +204,7 @@ class TraceAgentE2ESmokeTest {
                 if (response.statusCode() == 200) return;
             } catch (Exception ignored) {
             }
-            Thread.sleep(200);
+            pauseMillis(200);
         }
         fail("trace-e2e-server did not become ready within timeout");
     }
@@ -315,7 +316,7 @@ class TraceAgentE2ESmokeTest {
                     JsonNode e = snapshot.get(cursor++);
                     if (predicate.test(e)) return e;
                 }
-                Thread.sleep(50);
+                pauseMillis(50);
             }
             fail("Expected event not found in " + timeoutSeconds + "s. Collected events=" + events.size());
             return null;
@@ -337,6 +338,18 @@ class TraceAgentE2ESmokeTest {
                 acceptor.awaitTermination(1, TimeUnit.SECONDS);
             } catch (InterruptedException ignored) {
                 Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private static void pauseMillis(long millis) {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
+        while (System.nanoTime() < deadline) {
+            long remaining = deadline - System.nanoTime();
+            LockSupport.parkNanos(Math.min(remaining, TimeUnit.MILLISECONDS.toNanos(10)));
+            if (Thread.currentThread().isInterrupted()) {
+                Thread.currentThread().interrupt();
+                return;
             }
         }
     }

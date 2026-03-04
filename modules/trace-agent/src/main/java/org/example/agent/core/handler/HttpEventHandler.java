@@ -76,6 +76,9 @@ public final class HttpEventHandler {
                 }
 
                 AgentLogger.debug("[RUNTIME] Transaction Started: " + method + " " + path + " (txId=" + txId + ")");
+                AgentLogger.debug("[TRACE][HTTP][HTTP_IN_START] txId=" + txId
+                    + " method=" + method + " path=" + path
+                    + " incomingTxId=" + incomingTxId + " incomingSpanId=" + incomingSpanId);
                 TcpSender.send(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_IN_START, TraceCategory.HTTP,
                         method + " " + path, null, true, null, spanId, incomingSpanId));
             }
@@ -89,6 +92,9 @@ public final class HttpEventHandler {
             boolean success = statusCode >= 200 && statusCode < 400;
             Map<String, Object> extra = new LinkedHashMap<>();
             extra.put("statusCode", statusCode);
+            AgentLogger.debug("[TRACE][HTTP][HTTP_IN_END] txId=" + txId
+                + " method=" + method + " path=" + path + " statusCode=" + statusCode
+                + " durationMs=" + durationMs + " success=" + success);
             TcpSender.send(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
                     method + " " + path, durationMs, success, extra, spanId, null));
             TxIdHolder.clear(); SpanIdHolder.clear();
@@ -96,7 +102,8 @@ public final class HttpEventHandler {
     }
 
     public static void onInEndAsync(String txId, String spanId, String method,
-                             String path, long startTime, Object request) {
+                             String path, long startTime, Object request,
+                             String terminalType, Object asyncEvent) {
         TraceRuntime.safeRun(() -> {
             if (request != null && Boolean.TRUE.equals(TraceRuntime.invokeGetAttribute(request, "__TRACE_FINISHED__"))) return;
             if (request != null) TraceRuntime.invokeSetAttribute(request, "__TRACE_FINISHED__", Boolean.TRUE);
@@ -104,10 +111,56 @@ public final class HttpEventHandler {
             long durationMs = System.currentTimeMillis() - startTime;
             AgentLogger.debug("[RUNTIME] Transaction Completed (Async): txId=" + txId + " (" + durationMs + "ms)");
             Map<String, Object> extra = new LinkedHashMap<>();
-            extra.put("statusCode", 200); extra.put("async", true);
+            int statusCode = resolveAsyncStatusCode(terminalType, asyncEvent);
+            boolean success = "onComplete".equals(terminalType) && statusCode >= 200 && statusCode < 400;
+            extra.put("statusCode", statusCode);
+            extra.put("async", true);
+            extra.put("asyncTerminal", terminalType);
+            if ("onError".equals(terminalType)) {
+                Object throwable = asyncEvent != null ? TraceRuntime.invokeMethodSimple(asyncEvent, "getThrowable") : null;
+                if (throwable instanceof Throwable) {
+                    extra.put("errorType", ((Throwable) throwable).getClass().getSimpleName());
+                    extra.put("errorMessage", ((Throwable) throwable).getMessage() != null ? ((Throwable) throwable).getMessage() : "");
+                } else {
+                    extra.put("errorType", "AsyncError");
+                    extra.put("errorMessage", "");
+                }
+            }
+            if ("onTimeout".equals(terminalType)) {
+                extra.put("timeout", true);
+            }
+            AgentLogger.debug("[TRACE][HTTP][HTTP_IN_END] txId=" + txId
+                + " method=" + method + " path=" + path + " statusCode=" + statusCode
+                + " durationMs=" + durationMs + " success=" + success
+                + " async=true terminal=" + terminalType
+                + (extra.containsKey("errorType") ? " errorType=" + extra.get("errorType") : "")
+                + (extra.containsKey("errorMessage") ? " errorMessage=" + extra.get("errorMessage") : ""));
             TcpSender.send(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
-                    method + " " + path, durationMs, true, extra, spanId, null));
+                    method + " " + path, durationMs, success, extra, spanId, null));
         });
+    }
+
+    private static int resolveAsyncStatusCode(String terminalType, Object asyncEvent) {
+        Integer responseStatus = tryExtractAsyncResponseStatus(asyncEvent);
+        if (responseStatus != null) return responseStatus;
+        if ("onTimeout".equals(terminalType)) return 504;
+        if ("onError".equals(terminalType)) return 500;
+        return 200;
+    }
+
+    private static Integer tryExtractAsyncResponseStatus(Object asyncEvent) {
+        if (asyncEvent == null) return null;
+        try {
+            Object suppliedResponse = TraceRuntime.invokeMethodSimple(asyncEvent, "getSuppliedResponse");
+            if (suppliedResponse == null) return null;
+            Method statusMethod = TraceRuntime.findMethod(suppliedResponse.getClass(), "getStatus");
+            if (statusMethod == null) return null;
+            Object status = statusMethod.invoke(suppliedResponse);
+            if (status instanceof Number) return ((Number) status).intValue();
+            return null;
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     public static void onInError(Throwable t, String method, String path, long durationMs) {
@@ -116,6 +169,11 @@ public final class HttpEventHandler {
             String spanId = SpanIdHolder.get();
             Map<String, Object> extra = new LinkedHashMap<>();
             extra.put("errorType", t != null ? t.getClass().getSimpleName() : "UnknownError");
+            extra.put("errorMessage", (t != null && t.getMessage() != null) ? t.getMessage() : "");
+            AgentLogger.debug("[TRACE][HTTP][HTTP_IN_END] txId=" + txId
+                + " method=" + method + " path=" + path + " durationMs=" + durationMs
+                + " success=false errorType=" + extra.get("errorType")
+                + " errorMessage=" + extra.get("errorMessage"));
             TcpSender.send(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
                     method + " " + path, durationMs, false, extra, spanId, null));
             TxIdHolder.clear(); SpanIdHolder.clear();
@@ -175,7 +233,8 @@ public final class HttpEventHandler {
                                 String name = m.getName();
                                 if (("onComplete".equals(name) || "onError".equals(name) || "onTimeout".equals(name))
                                         && completed.compareAndSet(false, true)) {
-                                    onInEndAsync(finalTxId, finalSpanId, method, path, startTime, request);
+                                    Object asyncEvent = (args != null && args.length > 0) ? args[0] : null;
+                                    onInEndAsync(finalTxId, finalSpanId, method, path, startTime, request, name, asyncEvent);
                                 }
                                 return null;
                             }
@@ -200,6 +259,9 @@ public final class HttpEventHandler {
             String txId = TxIdHolder.get(); if (txId == null) return;
             Map<String, Object> extra = new HashMap<>();
             extra.put("statusCode", statusCode); extra.put("method", method);
+            AgentLogger.debug("[TRACE][HTTP][HTTP_OUT] txId=" + txId
+                + " method=" + method + " uri=" + uri + " statusCode=" + statusCode
+                + " durationMs=" + durationMs + " success=" + (statusCode >= 200 && statusCode < 400));
             TcpSender.send(TraceRuntime.createChildEvent(txId, TraceEventType.HTTP_OUT,
                     TraceCategory.HTTP, uri, durationMs, statusCode >= 200 && statusCode < 400, extra));
         });
@@ -211,6 +273,11 @@ public final class HttpEventHandler {
             Map<String, Object> extra = new LinkedHashMap<>();
             extra.put("method", method);
             extra.put("errorType", t != null ? t.getClass().getSimpleName() : "UnknownError");
+            extra.put("errorMessage", (t != null && t.getMessage() != null) ? t.getMessage() : "");
+            AgentLogger.debug("[TRACE][HTTP][HTTP_OUT] txId=" + txId
+                + " method=" + method + " uri=" + url + " durationMs=" + durationMs
+                + " success=false errorType=" + extra.get("errorType")
+                + " errorMessage=" + extra.get("errorMessage"));
             TcpSender.send(TraceRuntime.createChildEvent(txId, TraceEventType.HTTP_OUT,
                     TraceCategory.HTTP, url, durationMs, false, extra));
         });
@@ -304,7 +371,10 @@ public final class HttpEventHandler {
             boolean success = status >= 200 && status < 400 && t == null;
             Map<String, Object> extra = new LinkedHashMap<>();
             extra.put("statusCode", status);
-            if (t != null) extra.put("errorType", t.getClass().getSimpleName());
+            if (t != null) {
+                extra.put("errorType", t.getClass().getSimpleName());
+                extra.put("errorMessage", t.getMessage() != null ? t.getMessage() : "");
+            }
             TcpSender.send(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
                     mp[0] + " " + mp[mp.length > 1 ? 1 : 0], durationMs, success, extra, spanId, null));
             TxIdHolder.clear(); SpanIdHolder.clear();
@@ -333,7 +403,10 @@ public final class HttpEventHandler {
             boolean success = statusCode >= 200 && statusCode < 400 && cause == null;
             Map<String, Object> extra = new LinkedHashMap<>();
             extra.put("method", method); extra.put("statusCode", statusCode);
-            if (cause != null) extra.put("errorType", cause.getClass().getSimpleName());
+            if (cause != null) {
+                extra.put("errorType", cause.getClass().getSimpleName());
+                extra.put("errorMessage", cause.getMessage() != null ? cause.getMessage() : "");
+            }
             TcpSender.send(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP,
                     uri, durationMs, success, extra, TraceRuntime.generateSpanId(), parentSpanId));
         });

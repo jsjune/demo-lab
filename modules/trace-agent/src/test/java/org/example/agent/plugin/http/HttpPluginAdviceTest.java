@@ -1,6 +1,5 @@
 package org.example.agent.plugin.http;
 
-import org.example.agent.plugin.BaseAdvice;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -66,7 +65,7 @@ class HttpPluginAdviceTest {
                 eq(Opcodes.INVOKESTATIC),
                 eq("org/example/agent/core/TraceRuntime"),
                 eq("onWebFluxHandleStart"),
-                anyString(),
+                eq("(Ljava/lang/Object;)V"),
                 eq(false)
             );
         }
@@ -85,7 +84,7 @@ class HttpPluginAdviceTest {
                 eq(Opcodes.INVOKESTATIC),
                 eq("org/example/agent/core/TraceRuntime"),
                 eq("wrapWebFluxHandle"),
-                anyString(),
+                eq("(Ljava/lang/Object;Ljava/lang/Object;J)Ljava/lang/Object;"),
                 eq(false)
             );
             
@@ -94,7 +93,7 @@ class HttpPluginAdviceTest {
                 eq(Opcodes.INVOKESTATIC),
                 eq("org/example/agent/core/TxIdHolder"),
                 eq("clear"),
-                anyString(),
+                eq("()V"),
                 eq(false)
             );
         }
@@ -118,7 +117,7 @@ class HttpPluginAdviceTest {
                 eq(Opcodes.INVOKESTATIC),
                 eq("org/example/agent/core/TraceRuntime"),
                 eq("onHttpOut"),
-                anyString(),
+                eq("(Ljava/lang/String;Ljava/lang/String;IJ)V"),
                 eq(false)
             );
         }

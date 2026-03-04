@@ -54,7 +54,7 @@ public class TraceRuntime {
     // ── ABI: HTTP ─────────────────────────────────────────────────────────
     public static void onHttpInStart(Object req, String m, String p, String txId, String sid, boolean f) { HttpEventHandler.onInStart(req, m, p, txId, sid, f); }
     public static void onHttpInEnd(String m, String p, int sc, long ms)                                   { HttpEventHandler.onInEnd(m, p, sc, ms); }
-    public static void onHttpInEndAsync(String tx, String sid, String m, String p, long st, Object req)   { HttpEventHandler.onInEndAsync(tx, sid, m, p, st, req); }
+    public static void onHttpInEndAsync(String tx, String sid, String m, String p, long st, Object req)   { HttpEventHandler.onInEndAsync(tx, sid, m, p, st, req, "onComplete", null); }
     public static void onHttpInError(Throwable t, String m, String p, long ms)                            { HttpEventHandler.onInError(t, m, p, ms); }
     public static void registerAsyncListenerFromRequest(Object req)                                        { HttpEventHandler.registerFromRequest(req); }
     public static void registerAsyncListener(Object req, String m, String p, long st)                     { HttpEventHandler.register(req, m, p, st); }
@@ -69,6 +69,8 @@ public class TraceRuntime {
     public static void onMqProduce(String bt, String t, String k)                          { MqEventHandler.onProduce(bt, t, k); }
     public static void onMqConsumeStart(String bt, String t, String id)                    { MqEventHandler.onConsumeStart(bt, t, id); }
     public static void onMqConsumeEnd(String bt, String t, long ms)                        { MqEventHandler.onConsumeEnd(bt, t, ms); }
+    public static void onMqConsumeComplete(String bt, String t, long ms)                   { MqEventHandler.onConsumeComplete(bt, t, ms); }
+    public static void onMqConsumeErrorMark(Throwable t)                                    { MqEventHandler.markConsumeError(t); }
     public static void onMqConsumeError(Throwable e, String bt, String t, long ms)         { MqEventHandler.onConsumeError(e, bt, t, ms); }
 
     // ── ABI: DB ───────────────────────────────────────────────────────────
@@ -80,13 +82,19 @@ public class TraceRuntime {
     public static void onCacheGet(String k, boolean hit)                                   { CacheEventHandler.onGet(k, hit); }
     public static void onCacheSet(String k)                                                { CacheEventHandler.onSet(k); }
     public static void onCacheDel(String k)                                                { CacheEventHandler.onDel(k); }
+    public static void onCacheError(Throwable t, String op, String key)                    { CacheEventHandler.onError(t, op, key); }
+    public static void attachCacheGetListener(Object futureLike, String key)               { CacheEventHandler.attachGetListener(futureLike, key); }
+    public static void attachCacheOpListener(Object futureLike, String op, String key)     { CacheEventHandler.attachOpListener(futureLike, op, key); }
 
     // ── ABI: File I/O ─────────────────────────────────────────────────────
     public static void onFileRead(String p, long b, long ms, boolean s)                    { IoEventHandler.onRead(p, b, ms, s); }
     public static void onFileWrite(String p, long b, long ms, boolean s)                   { IoEventHandler.onWrite(p, b, ms, s); }
+    public static void onFileReadError(String p, long b, long ms, Throwable t)             { IoEventHandler.onReadError(p, b, ms, t); }
+    public static void onFileWriteError(String p, long b, long ms, Throwable t)            { IoEventHandler.onWriteError(p, b, ms, t); }
 
     // ── ABI: Async ────────────────────────────────────────────────────────
     public static String onAsyncStart(String task)                                         { return AsyncEventHandler.onStart(task); }
+    public static void   onAsyncError(Throwable t)                                          { AsyncEventHandler.onError(t); }
     public static void   onAsyncEnd(String task, String sid, long ms)                      { AsyncEventHandler.onEnd(task, sid, ms); }
 
     // ── ABI: Reflection utilities ─────────────────────────────────────────

@@ -32,7 +32,7 @@ public class UserController {
     // -----------------------------------------------------------------------
 
     @GetMapping("/async")
-    public CompletableFuture<Map<String, Object>> testAsync(@RequestParam(defaultValue = "test-async") String label) {
+    public CompletableFuture<Map<String, Object>> testAsync(@RequestParam(defaultValue = "test-async") String label) throws IllegalAccessException {
         log.info("[SAMPLE APP] Triggering async tasks: {}", label);
         asyncService.runAsyncTask(label);
         return webClient.get()

@@ -3,7 +3,6 @@ package org.example.agent.plugin.cache;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
-import org.mockito.InOrder;
 import org.mockito.Mockito;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
@@ -92,33 +91,27 @@ class RedisPluginAdviceTest {
         }
 
         @Test
-        @DisplayName("set 호출 시 safeKeyToString → onCacheSet 순서로 주입되어야 한다")
-        void set_injectsSafeKeyToString_thenOnCacheSet() {
+        @DisplayName("set onMethodExit: attachCacheOpListener가 호출되어야 한다")
+        void set_onExit_callsAttachCacheOpListener() {
             MethodVisitor mv = Mockito.mock(MethodVisitor.class);
             RedisPlugin.LettuceAdvice advice = new RedisPlugin.LettuceAdvice(
                 mv, Opcodes.ACC_PUBLIC, "set", "(Ljava/lang/Object;Ljava/lang/Object;)Lio/lettuce/core/RedisFuture;");
 
             advice.onMethodEnter();
+            advice.onMethodExit(Opcodes.ARETURN);
 
-            verify(mv).visitMethodInsn(
+            verify(mv, atLeastOnce()).visitMethodInsn(
                 eq(Opcodes.INVOKESTATIC),
                 eq("org/example/agent/core/TraceRuntime"),
-                eq("safeKeyToString"),
-                eq("(Ljava/lang/Object;)Ljava/lang/String;"),
-                eq(false)
-            );
-            verify(mv).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("onCacheSet"),
+                eq("attachCacheOpListener"),
                 anyString(),
                 eq(false)
             );
         }
 
         @Test
-        @DisplayName("eval 호출 시 lua 명령으로 onCacheSet이 주입되어야 한다")
-        void eval_injectsLuaOnCacheSet() {
+        @DisplayName("eval onMethodEnter: lua 키를 저장해야 한다")
+        void eval_onEnter_storesLuaKey() {
             MethodVisitor mv = Mockito.mock(MethodVisitor.class);
             RedisPlugin.LettuceAdvice advice = new RedisPlugin.LettuceAdvice(
                 mv, Opcodes.ACC_PUBLIC, "eval", "(Ljava/lang/String;)Lio/lettuce/core/RedisFuture;");
@@ -126,13 +119,6 @@ class RedisPluginAdviceTest {
             advice.onMethodEnter();
 
             verify(mv).visitLdcInsn(eq("lua:eval"));
-            verify(mv).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("onCacheSet"),
-                anyString(),
-                eq(false)
-            );
         }
     }
 
@@ -207,24 +193,16 @@ class RedisPluginAdviceTest {
         }
 
         @Test
-        @DisplayName("set 호출 시 safeKeyToString → onCacheSet 순서로 주입되어야 한다")
-        void set_injectsSafeKeyToString_thenOnCacheSet() {
+        @DisplayName("set onMethodExit: onCacheSet이 호출되어야 한다")
+        void set_onExit_callsOnCacheSet() {
             MethodVisitor mv = Mockito.mock(MethodVisitor.class);
             RedisPlugin.JedisAdvice advice = new RedisPlugin.JedisAdvice(
                 mv, Opcodes.ACC_PUBLIC, "set", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
 
             advice.onMethodEnter();
+            advice.onMethodExit(Opcodes.ARETURN);
 
-            InOrder order = inOrder(mv);
-            order.verify(mv).visitVarInsn(eq(Opcodes.ALOAD), eq(1));
-            order.verify(mv).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("safeKeyToString"),
-                eq("(Ljava/lang/Object;)Ljava/lang/String;"),
-                eq(false)
-            );
-            order.verify(mv).visitMethodInsn(
+            verify(mv, atLeastOnce()).visitMethodInsn(
                 eq(Opcodes.INVOKESTATIC),
                 eq("org/example/agent/core/TraceRuntime"),
                 eq("onCacheSet"),
@@ -234,22 +212,16 @@ class RedisPluginAdviceTest {
         }
 
         @Test
-        @DisplayName("del 호출 시 safeKeyToString → onCacheDel 순서로 주입되어야 한다")
-        void del_injectsSafeKeyToString_thenOnCacheDel() {
+        @DisplayName("del onMethodExit: onCacheDel이 호출되어야 한다")
+        void del_onExit_callsOnCacheDel() {
             MethodVisitor mv = Mockito.mock(MethodVisitor.class);
             RedisPlugin.JedisAdvice advice = new RedisPlugin.JedisAdvice(
                 mv, Opcodes.ACC_PUBLIC, "del", "(Ljava/lang/String;)Ljava/lang/Long;");
 
             advice.onMethodEnter();
+            advice.onMethodExit(Opcodes.ARETURN);
 
-            verify(mv).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("safeKeyToString"),
-                eq("(Ljava/lang/Object;)Ljava/lang/String;"),
-                eq(false)
-            );
-            verify(mv).visitMethodInsn(
+            verify(mv, atLeastOnce()).visitMethodInsn(
                 eq(Opcodes.INVOKESTATIC),
                 eq("org/example/agent/core/TraceRuntime"),
                 eq("onCacheDel"),
@@ -259,8 +231,8 @@ class RedisPluginAdviceTest {
         }
 
         @Test
-        @DisplayName("evalsha 호출 시 lua 명령으로 onCacheSet이 주입되어야 한다")
-        void evalsha_injectsLuaOnCacheSet() {
+        @DisplayName("evalsha onMethodEnter: lua 키를 저장해야 한다")
+        void evalsha_onEnter_storesLuaKey() {
             MethodVisitor mv = Mockito.mock(MethodVisitor.class);
             RedisPlugin.JedisAdvice advice = new RedisPlugin.JedisAdvice(
                 mv, Opcodes.ACC_PUBLIC, "evalsha", "(Ljava/lang/String;)Ljava/lang/Object;");
@@ -268,13 +240,6 @@ class RedisPluginAdviceTest {
             advice.onMethodEnter();
 
             verify(mv).visitLdcInsn(eq("lua:evalsha"));
-            verify(mv).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("onCacheSet"),
-                anyString(),
-                eq(false)
-            );
         }
     }
 }

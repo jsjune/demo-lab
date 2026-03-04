@@ -111,12 +111,25 @@ public class FileIoPlugin implements TracerPlugin {
 
         @Override
         protected void onMethodExit(int opcode) {
+            if (opcode == ATHROW) {
+                int throwableId = newLocal(Type.getType(Throwable.class));
+                mv.visitInsn(DUP);
+                mv.visitVarInsn(ASTORE, throwableId);
+                mv.visitVarInsn(ALOAD, pathId);
+                mv.visitVarInsn(ILOAD, 3);
+                mv.visitInsn(I2L);
+                calculateDurationAndPush();
+                mv.visitVarInsn(ALOAD, throwableId);
+                mv.visitMethodInsn(INVOKESTATIC,
+                    "org/example/agent/core/TraceRuntime", "onFileReadError",
+                    "(Ljava/lang/String;JJLjava/lang/Throwable;)V", false);
+                return;
+            }
             mv.visitVarInsn(ALOAD, pathId);
-            // sizeBytes = (long) len param — index 3: (this, byte[], off, len)
             mv.visitVarInsn(ILOAD, 3);
             mv.visitInsn(I2L);
             calculateDurationAndPush();
-            mv.visitInsn(opcode == ATHROW ? ICONST_0 : ICONST_1);
+            mv.visitInsn(ICONST_1);
             mv.visitMethodInsn(INVOKESTATIC,
                 "org/example/agent/core/TraceRuntime", "onFileRead",
                 "(Ljava/lang/String;JJZ)V", false);
@@ -178,12 +191,25 @@ public class FileIoPlugin implements TracerPlugin {
 
         @Override
         protected void onMethodExit(int opcode) {
+            if (opcode == ATHROW) {
+                int throwableId = newLocal(Type.getType(Throwable.class));
+                mv.visitInsn(DUP);
+                mv.visitVarInsn(ASTORE, throwableId);
+                mv.visitVarInsn(ALOAD, pathId);
+                mv.visitVarInsn(ILOAD, 3);
+                mv.visitInsn(I2L);
+                calculateDurationAndPush();
+                mv.visitVarInsn(ALOAD, throwableId);
+                mv.visitMethodInsn(INVOKESTATIC,
+                    "org/example/agent/core/TraceRuntime", "onFileWriteError",
+                    "(Ljava/lang/String;JJLjava/lang/Throwable;)V", false);
+                return;
+            }
             mv.visitVarInsn(ALOAD, pathId);
-            // sizeBytes = (long) len param — index 3: (this, byte[], off, len)
             mv.visitVarInsn(ILOAD, 3);
             mv.visitInsn(I2L);
             calculateDurationAndPush();
-            mv.visitInsn(opcode == ATHROW ? ICONST_0 : ICONST_1);
+            mv.visitInsn(ICONST_1);
             mv.visitMethodInsn(INVOKESTATIC,
                 "org/example/agent/core/TraceRuntime", "onFileWrite",
                 "(Ljava/lang/String;JJZ)V", false);

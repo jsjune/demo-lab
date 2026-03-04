@@ -35,6 +35,9 @@ public class ContextCapturingRunnable implements Runnable {
         
         try {
             delegate.run();
+        } catch (Throwable t) {
+            TraceRuntime.onAsyncError(t);
+            throw t;
         } finally {
             long duration = System.currentTimeMillis() - startTime;
             TraceRuntime.onAsyncEnd("Async-Runnable", asyncSpanId, duration);

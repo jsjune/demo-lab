@@ -25,13 +25,14 @@ public class ExecutorPlugin implements TracerPlugin {
         return AgentConfig.getPluginTargetPrefixes(pluginId(), Arrays.asList(
             "java/util/concurrent/ThreadPoolExecutor",
             "java/util/concurrent/ScheduledThreadPoolExecutor",
-            "java/util/concurrent/ForkJoinPool"
+            "java/util/concurrent/ForkJoinPool",
+            "org/springframework/aop/interceptor/"
         ));
     }
 
     @Override
     public List<ClassFileTransformer> transformers() {
-        return Arrays.asList(new ExecutorTransformer());
+        return Arrays.asList(new ExecutorTransformer(), new AsyncExecutionAspectTransformer());
     }
 
     static class SafeClassWriter extends ClassWriter {
@@ -94,6 +95,44 @@ public class ExecutorPlugin implements TracerPlugin {
                 }, ClassReader.EXPAND_FRAMES);
                 return cw.toByteArray();
             } catch (Exception e) { return null; }
+        }
+    }
+
+    static class AsyncExecutionAspectTransformer implements ClassFileTransformer {
+        @Override
+        public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain pd, byte[] classfileBuffer) {
+            String normalized = className == null ? "" : className.replace('.', '/');
+            if (!"org/springframework/aop/interceptor/AsyncExecutionAspectSupport".equals(normalized)) return null;
+            try {
+                ClassReader cr = new ClassReader(classfileBuffer);
+                ClassWriter cw = new SafeClassWriter(cr, loader);
+                cr.accept(new ClassVisitor(Opcodes.ASM9, cw) {
+                    @Override
+                    public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                        MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+                        if ("handleError".equals(name)
+                            && descriptor.startsWith("(Ljava/lang/Throwable;Ljava/lang/reflect/Method;[Ljava/lang/Object;)")) {
+                            return new AsyncErrorAdvice(mv, access, name, descriptor);
+                        }
+                        return mv;
+                    }
+                }, ClassReader.EXPAND_FRAMES);
+                return cw.toByteArray();
+            } catch (Throwable t) {
+                return null;
+            }
+        }
+    }
+
+    static class AsyncErrorAdvice extends BaseAdvice {
+        protected AsyncErrorAdvice(MethodVisitor mv, int access, String name, String descriptor) {
+            super(Opcodes.ASM9, mv, access, name, descriptor);
+        }
+
+        @Override
+        protected void onMethodEnter() {
+            mv.visitVarInsn(ALOAD, 1);
+            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onAsyncError", "(Ljava/lang/Throwable;)V", false);
         }
     }
 

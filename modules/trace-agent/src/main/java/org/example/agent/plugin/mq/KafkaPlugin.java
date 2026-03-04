@@ -63,6 +63,14 @@ public class KafkaPlugin implements TracerPlugin {
                         if ("onMessage".equals(name) && descriptor.startsWith("(Lorg/apache/kafka/clients/consumer/ConsumerRecord;")) {
                             return new KafkaAdapterAdvice(mv, access, name, descriptor);
                         }
+                        // Spring Kafka adapter may catch user-listener exceptions and route them to handleException(...)
+                        // in this case ATHROW is not seen at onMessage exit, so mark the error here.
+                        if ("handleException".equals(name)
+                            && (descriptor.contains("ListenerExecutionFailedException")
+                                || descriptor.contains("Throwable")
+                                || descriptor.contains("Exception"))) {
+                            return new KafkaHandleExceptionAdvice(mv, access, name, descriptor);
+                        }
                         return mv;
                     }
                 }, ClassReader.EXPAND_FRAMES);
@@ -122,7 +130,46 @@ public class KafkaPlugin implements TracerPlugin {
             mv.visitVarInsn(ALOAD, topicLocalId);
             calculateDurationAndPush();
             mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime",
-                "onMqConsumeEnd", "(Ljava/lang/String;Ljava/lang/String;J)V", false);
+                "onMqConsumeComplete", "(Ljava/lang/String;Ljava/lang/String;J)V", false);
+        }
+    }
+
+    static class KafkaHandleExceptionAdvice extends BaseAdvice {
+        private final int throwableArgIndex;
+
+        protected KafkaHandleExceptionAdvice(MethodVisitor mv, int access, String name, String descriptor) {
+            super(Opcodes.ASM9, mv, access, name, descriptor);
+            int found = -1;
+            Type[] args = Type.getArgumentTypes(descriptor);
+            int idx = ((access & Opcodes.ACC_STATIC) != 0) ? 0 : 1;
+            for (Type arg : args) {
+                if (found == -1 && arg.getSort() == Type.OBJECT) {
+                    String n = arg.getInternalName();
+                    if ("java/lang/Throwable".equals(n)
+                        || "java/lang/Exception".equals(n)
+                        || "java/lang/RuntimeException".equals(n)
+                        || n.endsWith("Exception")
+                        || n.endsWith("Error")) {
+                        found = idx;
+                    }
+                }
+                idx += arg.getSize();
+            }
+            this.throwableArgIndex = found;
+        }
+
+        @Override
+        protected void onMethodEnter() {
+            if (throwableArgIndex < 0) return;
+            mv.visitVarInsn(ALOAD, throwableArgIndex);
+            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime",
+                "onMqConsumeErrorMark", "(Ljava/lang/Throwable;)V", false);
+            // close consume span on paths where onMessage exits exceptionally without explicit ATHROW opcode
+            mv.visitLdcInsn("kafka");
+            mv.visitInsn(ACONST_NULL);
+            mv.visitLdcInsn(Long.valueOf(-1L));
+            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime",
+                "onMqConsumeComplete", "(Ljava/lang/String;Ljava/lang/String;J)V", false);
         }
     }
 

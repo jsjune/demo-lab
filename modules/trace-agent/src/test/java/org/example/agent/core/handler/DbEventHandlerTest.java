@@ -89,4 +89,20 @@ class DbEventHandlerTest {
         assertTrue(sql.length() <= 1003, "Truncated sql should be <= 1003 chars");
         assertTrue(sql.endsWith("..."));
     }
+
+    @Test
+    @DisplayName("T-05: onError — 실패와 errorType이 기록되어야 한다")
+    void onError_recordsFailureReason() {
+        TxIdHolder.set("tx-001");
+        SpanIdHolder.set("span-001");
+
+        DbEventHandler.onError(new IllegalArgumentException("bad-sql"), "SELECT X", 12L, "db-host");
+
+        assertEquals(1, capturedEvents.size());
+        TraceEvent e = capturedEvents.get(0);
+        assertEquals(TraceEventType.DB_QUERY_END, e.type());
+        assertFalse(e.success());
+        assertEquals("IllegalArgumentException", e.extraInfo().get("errorType"));
+        assertEquals("bad-sql", e.extraInfo().get("errorMessage"));
+    }
 }

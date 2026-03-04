@@ -46,9 +46,9 @@ public class SampleApplication {
         return template;
     }
 
-    @GetMapping("/error")
-    public String error() {
-        throw new RuntimeException("This is a test exception");
-    }
+//    @GetMapping("/error")
+//    public String error() {
+//        throw new RuntimeException("This is a test exception");
+//    }
 
 }

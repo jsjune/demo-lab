@@ -18,5 +18,6 @@ public class SampleWebFluxApplication {
     @GetMapping("/flux/test")
     public Mono<?> test() {
         return Mono.just(Map.of("message", "WebFlux is working!"));
+//        return Mono.error(new RuntimeException("test"));
     }
 }

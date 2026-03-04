@@ -80,5 +80,23 @@ class AsyncEventHandlerTest {
         assertEquals(TraceEventType.ASYNC_END, e.type());
         assertEquals(50L, e.durationMs());
         assertEquals("my-task", e.target());
+        assertTrue(e.success());
+    }
+
+    @Test
+    @DisplayName("T-04: onError 후 onEnd — ASYNC_END 실패 + errorType 포함")
+    void onError_thenOnEnd_emitsFailureWithErrorType() {
+        TxIdHolder.set("tx-001");
+        SpanIdHolder.set("span-001");
+
+        AsyncEventHandler.onError(new RuntimeException("boom"));
+        AsyncEventHandler.onEnd("my-task", "span-001", 70L);
+
+        assertEquals(1, capturedEvents.size());
+        TraceEvent e = capturedEvents.get(0);
+        assertEquals(TraceEventType.ASYNC_END, e.type());
+        assertFalse(e.success());
+        assertEquals("RuntimeException", String.valueOf(e.extraInfo().get("errorType")));
+        assertEquals("boom", String.valueOf(e.extraInfo().get("errorMessage")));
     }
 }

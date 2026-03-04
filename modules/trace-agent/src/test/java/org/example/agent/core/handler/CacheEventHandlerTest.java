@@ -10,6 +10,7 @@ import org.mockito.MockedStatic;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -76,5 +77,34 @@ class CacheEventHandlerTest {
 
         assertEquals(1, capturedEvents.size());
         assertEquals(TraceEventType.CACHE_DEL, capturedEvents.get(0).type());
+    }
+
+    @Test
+    @DisplayName("T-05: onError — CACHE_ERROR + errorType 기록")
+    void onError_emitsCacheErrorWithReason() {
+        CacheEventHandler.onError(new IllegalStateException("boom"), "get", "k1");
+
+        assertEquals(1, capturedEvents.size());
+        TraceEvent e = capturedEvents.get(0);
+        assertEquals(TraceEventType.CACHE_ERROR, e.type());
+        assertFalse(e.success());
+        assertEquals("get", e.extraInfo().get("operation"));
+        assertEquals("IllegalStateException", e.extraInfo().get("errorType"));
+        assertEquals("boom", e.extraInfo().get("errorMessage"));
+    }
+
+    @Test
+    @DisplayName("T-06: attachGetListener — future 성공/실패를 CACHE_HIT|MISS/CACHE_ERROR로 기록")
+    void attachGetListener_recordsSuccessAndFailure() {
+        CompletableFuture<Object> f1 = new CompletableFuture<>();
+        CacheEventHandler.attachGetListener(f1, "k-get");
+        f1.complete("v1");
+
+        CompletableFuture<Object> f2 = new CompletableFuture<>();
+        CacheEventHandler.attachGetListener(f2, "k-get-err");
+        f2.completeExceptionally(new RuntimeException("x"));
+
+        assertTrue(capturedEvents.stream().anyMatch(e -> e.type() == TraceEventType.CACHE_HIT));
+        assertTrue(capturedEvents.stream().anyMatch(e -> e.type() == TraceEventType.CACHE_ERROR));
     }
 }

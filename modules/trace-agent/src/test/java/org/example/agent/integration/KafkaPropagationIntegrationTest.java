@@ -50,4 +50,81 @@ class KafkaPropagationIntegrationTest extends ByteBuddyIntegrationTest {
             // Simulates RecordMessagingMessageListenerAdapter.onMessage()
         }
     }
+
+    @Test
+    @DisplayName("어댑터가 예외를 내부 handleException으로 소비해도 error mark + consume complete가 호출되어야 한다")
+    void testKafkaAdapterInternalHandleExceptionPath_marksErrorAndCompletes() throws Exception {
+        KafkaPlugin plugin = new KafkaPlugin();
+        var adapterTransformer = plugin.transformers().get(1);
+
+        Class<?> transformedAdapter = transformAndLoad(DummyMessagingMessageListenerAdapterWithHandleException.class, adapterTransformer);
+        Object adapterInstance = transformedAdapter.getDeclaredConstructor().newInstance();
+
+        try (MockedStatic<TraceRuntime> runtimeMock = mockStatic(TraceRuntime.class)) {
+            try (MockedStatic<KafkaPlugin> pluginMock = mockStatic(KafkaPlugin.class, withSettings().defaultAnswer(CALLS_REAL_METHODS))) {
+                pluginMock.when(() -> KafkaPlugin.extractTxId(any())).thenReturn("tx-kafka-err-1");
+                pluginMock.when(() -> KafkaPlugin.extractTopic(any())).thenReturn("test-topic");
+
+                Method onMessage = transformedAdapter.getDeclaredMethod("onMessage",
+                    org.apache.kafka.clients.consumer.ConsumerRecord.class, Object.class, Object.class);
+                onMessage.invoke(adapterInstance, null, null, null);
+
+                runtimeMock.verify(() -> TraceRuntime.onMqConsumeErrorMark(any(Throwable.class)), atLeastOnce());
+                runtimeMock.verify(() -> TraceRuntime.onMqConsumeComplete(anyString(), anyString(), anyLong()), atLeastOnce());
+            }
+        }
+    }
+
+    public static class DummyMessagingMessageListenerAdapterWithHandleException {
+        public void onMessage(org.apache.kafka.clients.consumer.ConsumerRecord<?, ?> record, Object ack, Object consumer) {
+            try {
+                throw new RuntimeException("listener boom");
+            } catch (Exception e) {
+                handleException(e, record);
+            }
+        }
+
+        protected void handleException(Exception ex, org.apache.kafka.clients.consumer.ConsumerRecord<?, ?> record) {
+            // no-op
+        }
+    }
+
+    @Test
+    @DisplayName("3.3+ handleException(ListenerExecutionFailedException) 경로에서도 error mark + complete가 호출되어야 한다")
+    void testKafkaAdapterV33HandleExceptionPath_marksErrorAndCompletes() throws Exception {
+        KafkaPlugin plugin = new KafkaPlugin();
+        var adapterTransformer = plugin.transformers().get(1);
+
+        Class<?> transformedAdapter = transformAndLoad(DummyMessagingMessageListenerAdapterWithV33HandleException.class, adapterTransformer);
+        Object adapterInstance = transformedAdapter.getDeclaredConstructor().newInstance();
+
+        try (MockedStatic<TraceRuntime> runtimeMock = mockStatic(TraceRuntime.class)) {
+            try (MockedStatic<KafkaPlugin> pluginMock = mockStatic(KafkaPlugin.class, withSettings().defaultAnswer(CALLS_REAL_METHODS))) {
+                pluginMock.when(() -> KafkaPlugin.extractTxId(any())).thenReturn("tx-kafka-err-33");
+                pluginMock.when(() -> KafkaPlugin.extractTopic(any())).thenReturn("test-topic");
+
+                Method onMessage = transformedAdapter.getDeclaredMethod("onMessage",
+                    org.apache.kafka.clients.consumer.ConsumerRecord.class, Object.class, Object.class);
+                onMessage.invoke(adapterInstance, null, null, null);
+
+                runtimeMock.verify(() -> TraceRuntime.onMqConsumeErrorMark(any(Throwable.class)), atLeastOnce());
+                runtimeMock.verify(() -> TraceRuntime.onMqConsumeComplete(anyString(), anyString(), anyLong()), atLeastOnce());
+            }
+        }
+    }
+
+    public static class DummyMessagingMessageListenerAdapterWithV33HandleException {
+        public void onMessage(org.apache.kafka.clients.consumer.ConsumerRecord<?, ?> record, Object ack, Object consumer) {
+            org.springframework.kafka.listener.ListenerExecutionFailedException ex =
+                new org.springframework.kafka.listener.ListenerExecutionFailedException("listener boom", new RuntimeException("listener boom"));
+            handleException(record, null, null, null, ex);
+        }
+
+        protected void handleException(Object rec, org.springframework.kafka.support.Acknowledgment ack,
+                                       org.apache.kafka.clients.consumer.Consumer<?, ?> consumer,
+                                       org.springframework.messaging.Message<?> message,
+                                       org.springframework.kafka.listener.ListenerExecutionFailedException ex) {
+            // no-op
+        }
+    }
 }

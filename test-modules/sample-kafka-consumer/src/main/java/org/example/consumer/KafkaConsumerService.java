@@ -24,7 +24,7 @@ public class KafkaConsumerService {
         // For chain-sync events: refresh DB records in cache
         if (message.startsWith("chain-sync:")) {
             userRepository.findAll()
-                .forEach(u -> redisTemplate.opsForValue().set("user:" + u.getId(), u));
+                    .forEach(u -> redisTemplate.opsForValue().set("user:" + u.getId(), u));
             log.info("[KAFKA CONSUMER] Chain-sync cache refresh done");
         }
 
@@ -34,5 +34,10 @@ public class KafkaConsumerService {
             redisTemplate.delete("user:" + id);
             log.info("[KAFKA CONSUMER] Cleared cache for user: {}", id);
         }
+    }
+
+    @KafkaListener(topics = "test-topic")
+    public void consumeTestTopic(String message) {
+        throw new RuntimeException("[KAFKA CONSUMER] Received on test-topic: " + message);
     }
 }

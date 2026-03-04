@@ -6,6 +6,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.List;
 
@@ -23,6 +24,7 @@ class AgentConfigTest {
 
     @AfterEach
     void tearDown() {
+        setResolvedProfileQuietly(null);
         stateGuard.close();
     }
 
@@ -110,12 +112,91 @@ class AgentConfigTest {
         assertEquals(1000L, AgentConfig.getBatchFlushMs());
     }
 
+    @Test
+    @DisplayName("spring.version 미설정 시 기본 프로필은 SPRING_5")
+    void getSpringVersionProfile_defaultIsSpring5() {
+        assertEquals(SpringVersionProfile.SPRING_5, AgentConfig.getSpringVersionProfile());
+    }
+
+    @Test
+    @DisplayName("resolvedProfile 설정 시 servlet package가 프로필과 일치해야 한다")
+    void getServletPackage_matchesResolvedProfile() throws Exception {
+        setResolvedProfile(SpringVersionProfile.SPRING_6_1);
+        assertEquals("jakarta/servlet/http", AgentConfig.getServletPackage());
+    }
+
+    @Test
+    @DisplayName("http.* 클래스 오버라이드 값이 우선되어야 한다")
+    void httpClassOverrides_arePreferred() throws Exception {
+        setProperty("http.dispatcher.class", "a/b/CDispatcher");
+        setProperty("http.resttemplate.class", "a/b/CRestTemplate");
+        setProperty("http.webclient.class.prefix", "a/b/CWebClient");
+
+        assertEquals("a/b/CDispatcher", AgentConfig.getHttpDispatcherClass());
+        assertEquals("a/b/CRestTemplate", AgentConfig.getHttpRestTemplateClass());
+        assertEquals("a/b/CWebClient", AgentConfig.getHttpWebClientClassPrefix());
+    }
+
+    @Test
+    @DisplayName("updateProfileFromLoader로 profile이 해석되면 resolved 상태가 true여야 한다")
+    void updateProfileFromLoader_marksResolved() throws Exception {
+        setResolvedProfile(null);
+        ClassLoader loader = selectiveLoader("jakarta.servlet.http.HttpServletRequest");
+
+        AgentConfig.updateProfileFromLoader(loader);
+
+        assertTrue(AgentConfig.isSpringVersionResolved());
+        assertEquals(SpringVersionProfile.SPRING_6_0, AgentConfig.getSpringVersionProfile());
+    }
+
+    @Test
+    @DisplayName("이미 resolvedProfile이 있으면 updateProfileFromLoader는 변경하지 않아야 한다")
+    void updateProfileFromLoader_doesNotOverrideResolvedProfile() throws Exception {
+        setResolvedProfile(SpringVersionProfile.SPRING_5);
+        ClassLoader loader = selectiveLoader(
+            "jakarta.servlet.http.HttpServletRequest",
+            "org.springframework.web.client.RestClient");
+
+        AgentConfig.updateProfileFromLoader(loader);
+
+        assertEquals(SpringVersionProfile.SPRING_5, AgentConfig.getSpringVersionProfile());
+    }
+
     // -----------------------------------------------------------------------
     // 헬퍼
     // -----------------------------------------------------------------------
 
     private void setProperty(String key, String value) throws Exception {
         stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", key, value);
+    }
+
+    private void setResolvedProfile(SpringVersionProfile profile) throws Exception {
+        Field field = AgentConfig.class.getDeclaredField("resolvedProfile");
+        field.setAccessible(true);
+        field.set(null, profile);
+    }
+
+    private void setResolvedProfileQuietly(SpringVersionProfile profile) {
+        try {
+            setResolvedProfile(profile);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private ClassLoader selectiveLoader(String... loadableNames) {
+        java.util.Set<String> names = java.util.Set.of(loadableNames);
+        return new ClassLoader(getClass().getClassLoader()) {
+            @Override
+            public Class<?> loadClass(String name) throws ClassNotFoundException {
+                if (name.startsWith("java.")) {
+                    return super.loadClass(name);
+                }
+                if (names.contains(name)) {
+                    return Object.class;
+                }
+                throw new ClassNotFoundException(name);
+            }
+        };
     }
 
 }

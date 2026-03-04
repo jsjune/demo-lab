@@ -66,8 +66,8 @@ class MqEventHandlerTest {
     @Test
     @DisplayName("T-03: onConsumeEnd — MQ_CONSUME_END 이벤트, 컨텍스트 클리어")
     void onConsumeEnd_emitsEventAndClearsContext() {
-        TxIdHolder.set("tx-001");
-        SpanIdHolder.set("span-001");
+        MqEventHandler.onConsumeStart("kafka", "my-topic", "tx-001");
+        capturedEvents.clear();
 
         MqEventHandler.onConsumeEnd("kafka", "my-topic", 100L);
 
@@ -83,13 +83,48 @@ class MqEventHandlerTest {
     @Test
     @DisplayName("T-04: onConsumeError — success=false")
     void onConsumeError_emitsSuccessFalse() {
-        TxIdHolder.set("tx-001");
-        SpanIdHolder.set("span-001");
+        MqEventHandler.onConsumeStart("kafka", "my-topic", "tx-001");
+        capturedEvents.clear();
 
         MqEventHandler.onConsumeError(new RuntimeException("err"), "kafka", "my-topic", 50L);
 
         assertEquals(1, capturedEvents.size());
         assertFalse(capturedEvents.get(0).success());
+        assertEquals("RuntimeException", capturedEvents.get(0).extraInfo().get("errorType"));
+        assertEquals("err", capturedEvents.get(0).extraInfo().get("errorMessage"));
+    }
+
+    @Test
+    @DisplayName("T-04-1: markConsumeError 후 onConsumeComplete — 실패 이벤트로 기록")
+    void onConsumeComplete_withMarkedError_emitsFailure() {
+        TxIdHolder.set("tx-001");
+        SpanIdHolder.set("span-001");
+        MqEventHandler.onConsumeStart("kafka", "my-topic", "tx-001");
+        capturedEvents.clear();
+
+        MqEventHandler.markConsumeError(new IllegalStateException("listener failed"));
+        MqEventHandler.onConsumeComplete("kafka", null, -1L);
+
+        assertEquals(1, capturedEvents.size());
+        TraceEvent e = capturedEvents.get(0);
+        assertEquals(TraceEventType.MQ_CONSUME_END, e.type());
+        assertFalse(e.success());
+        assertEquals("IllegalStateException", e.extraInfo().get("errorType"));
+        assertEquals("listener failed", e.extraInfo().get("errorMessage"));
+    }
+
+    @Test
+    @DisplayName("T-04-2: 완료 후 재완료 호출은 중복 이벤트를 만들지 않아야 한다")
+    void onConsumeComplete_afterFinished_noDuplicate() {
+        MqEventHandler.onConsumeStart("kafka", "my-topic", "tx-001");
+        capturedEvents.clear();
+        MqEventHandler.markConsumeError(new RuntimeException("x"));
+
+        MqEventHandler.onConsumeComplete("kafka", "my-topic", -1L);
+        MqEventHandler.onConsumeComplete("kafka", "my-topic", -1L);
+
+        assertEquals(1, capturedEvents.size());
+        assertEquals(TraceEventType.MQ_CONSUME_END, capturedEvents.get(0).type());
     }
 
     @Test

@@ -59,4 +59,76 @@ class KafkaPluginAdviceTest {
             eq(false)
         );
     }
+
+    @Test
+    @DisplayName("MessagingMessageListenerAdapter.onMessage 정상 종료 시 onMqConsumeComplete가 호출되어야 한다")
+    void testKafkaAdapterAdviceOnMethodExit_callsComplete() {
+        MethodVisitor mv = Mockito.mock(MethodVisitor.class);
+        String desc = "(Lorg/apache/kafka/clients/consumer/ConsumerRecord;Ljava/lang/Object;Ljava/lang/Object;)V";
+        KafkaPlugin.KafkaAdapterAdvice advice = new KafkaPlugin.KafkaAdapterAdvice(
+            mv, Opcodes.ACC_PUBLIC, "onMessage", desc);
+
+        advice.onMethodEnter();
+        advice.onMethodExit(Opcodes.RETURN);
+
+        verify(mv, atLeastOnce()).visitMethodInsn(
+            eq(Opcodes.INVOKESTATIC),
+            eq("org/example/agent/core/TraceRuntime"),
+            eq("onMqConsumeComplete"),
+            anyString(),
+            eq(false)
+        );
+    }
+
+    @Test
+    @DisplayName("handleException 진입 시 onMqConsumeErrorMark가 호출되어야 한다")
+    void testKafkaHandleExceptionAdvice_marksError() {
+        MethodVisitor mv = Mockito.mock(MethodVisitor.class);
+        String desc = "(Ljava/lang/Exception;Lorg/apache/kafka/clients/consumer/ConsumerRecord;)V";
+        KafkaPlugin.KafkaHandleExceptionAdvice advice = new KafkaPlugin.KafkaHandleExceptionAdvice(
+            mv, Opcodes.ACC_PROTECTED, "handleException", desc);
+
+        advice.onMethodEnter();
+
+        verify(mv, atLeastOnce()).visitMethodInsn(
+            eq(Opcodes.INVOKESTATIC),
+            eq("org/example/agent/core/TraceRuntime"),
+            eq("onMqConsumeErrorMark"),
+            eq("(Ljava/lang/Throwable;)V"),
+            eq(false)
+        );
+        verify(mv, atLeastOnce()).visitMethodInsn(
+            eq(Opcodes.INVOKESTATIC),
+            eq("org/example/agent/core/TraceRuntime"),
+            eq("onMqConsumeComplete"),
+            eq("(Ljava/lang/String;Ljava/lang/String;J)V"),
+            eq(false)
+        );
+    }
+
+    @Test
+    @DisplayName("3.3+ handleException 시그니처에서도 onMqConsumeErrorMark가 호출되어야 한다")
+    void testKafkaHandleExceptionAdvice_v33Signature_marksError() {
+        MethodVisitor mv = Mockito.mock(MethodVisitor.class);
+        String desc = "(Ljava/lang/Object;Lorg/springframework/kafka/support/Acknowledgment;Lorg/apache/kafka/clients/consumer/Consumer;Lorg/springframework/messaging/Message;Lorg/springframework/kafka/listener/ListenerExecutionFailedException;)V";
+        KafkaPlugin.KafkaHandleExceptionAdvice advice = new KafkaPlugin.KafkaHandleExceptionAdvice(
+            mv, Opcodes.ACC_PROTECTED, "handleException", desc);
+
+        advice.onMethodEnter();
+
+        verify(mv, atLeastOnce()).visitMethodInsn(
+            eq(Opcodes.INVOKESTATIC),
+            eq("org/example/agent/core/TraceRuntime"),
+            eq("onMqConsumeErrorMark"),
+            eq("(Ljava/lang/Throwable;)V"),
+            eq(false)
+        );
+        verify(mv, atLeastOnce()).visitMethodInsn(
+            eq(Opcodes.INVOKESTATIC),
+            eq("org/example/agent/core/TraceRuntime"),
+            eq("onMqConsumeComplete"),
+            eq("(Ljava/lang/String;Ljava/lang/String;J)V"),
+            eq(false)
+        );
+    }
 }

@@ -70,36 +70,43 @@ public class RedisPlugin implements TracerPlugin {
 
         @Override
         protected void onMethodEnter() {
+            keyLocalIdx = newLocal(Type.getType(String.class));
             if ("eval".equals(commandName) || "evalsha".equals(commandName)) {
                 mv.visitLdcInsn("lua:" + commandName);
-                mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onCacheSet", "(Ljava/lang/String;)V", false);
-                return;
+            } else {
+                mv.visitVarInsn(ALOAD, 1);
+                mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "safeKeyToString", "(Ljava/lang/Object;)Ljava/lang/String;", false);
             }
-            mv.visitVarInsn(ALOAD, 1);
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "safeKeyToString", "(Ljava/lang/Object;)Ljava/lang/String;", false);
-
-            if ("get".equals(commandName) || "hget".equals(commandName)) {
-                // 키를 로컬 변수에 저장 — HIT/MISS는 onMethodExit에서 비동기 콜백으로 판단
-                keyLocalIdx = newLocal(Type.getType(String.class));
-                mv.visitVarInsn(ASTORE, keyLocalIdx);
-            } else if ("set".equals(commandName) || "hset".equals(commandName)) {
-                mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onCacheSet", "(Ljava/lang/String;)V", false);
-            } else if ("del".equals(commandName)) {
-                mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onCacheDel", "(Ljava/lang/String;)V", false);
-            }
+            mv.visitVarInsn(ASTORE, keyLocalIdx);
         }
 
         @Override
         protected void onMethodExit(int opcode) {
+            if (opcode == ATHROW) {
+                mv.visitInsn(DUP);
+                mv.visitLdcInsn(commandName);
+                mv.visitVarInsn(ALOAD, keyLocalIdx);
+                mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onCacheError",
+                    "(Ljava/lang/Throwable;Ljava/lang/String;Ljava/lang/String;)V", false);
+                return;
+            }
             if (("get".equals(commandName) || "hget".equals(commandName)) && opcode == ARETURN) {
-                // Stack at ARETURN: [..., RedisFuture(retVal)]
-                mv.visitInsn(DUP);                           // [..., RedisFuture, RedisFuture(dup)]
-                mv.visitVarInsn(ALOAD, keyLocalIdx);          // [..., RedisFuture, RedisFuture(dup), String(key)]
+                mv.visitInsn(DUP);
+                mv.visitVarInsn(ALOAD, keyLocalIdx);
                 mv.visitMethodInsn(INVOKESTATIC,
                     "org/example/agent/core/TraceRuntime",
                     "attachCacheGetListener",
                     "(Ljava/lang/Object;Ljava/lang/String;)V", false);
-                // attachCacheGetListener이 dup+key 소비 → Stack: [..., RedisFuture(retVal)]
+                return;
+            }
+            if (opcode == ARETURN) {
+                mv.visitInsn(DUP);
+                mv.visitLdcInsn(commandName);
+                mv.visitVarInsn(ALOAD, keyLocalIdx);
+                mv.visitMethodInsn(INVOKESTATIC,
+                    "org/example/agent/core/TraceRuntime",
+                    "attachCacheOpListener",
+                    "(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/String;)V", false);
             }
         }
     }
@@ -146,27 +153,26 @@ public class RedisPlugin implements TracerPlugin {
 
         @Override
         protected void onMethodEnter() {
+            keyLocalIdx = newLocal(Type.getType(String.class));
             if ("eval".equals(commandName) || "evalsha".equals(commandName)) {
                 mv.visitLdcInsn("lua:" + commandName);
-                mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onCacheSet", "(Ljava/lang/String;)V", false);
-                return;
+            } else {
+                mv.visitVarInsn(ALOAD, 1);
+                mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "safeKeyToString", "(Ljava/lang/Object;)Ljava/lang/String;", false);
             }
-            mv.visitVarInsn(ALOAD, 1);
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "safeKeyToString", "(Ljava/lang/Object;)Ljava/lang/String;", false);
-
-            if ("get".equals(commandName)) {
-                // 키를 로컬 변수에 저장 — HIT/MISS는 onMethodExit에서 동기 반환값으로 판단
-                keyLocalIdx = newLocal(Type.getType(String.class));
-                mv.visitVarInsn(ASTORE, keyLocalIdx);
-            } else if ("set".equals(commandName)) {
-                mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onCacheSet", "(Ljava/lang/String;)V", false);
-            } else if ("del".equals(commandName)) {
-                mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onCacheDel", "(Ljava/lang/String;)V", false);
-            }
+            mv.visitVarInsn(ASTORE, keyLocalIdx);
         }
 
         @Override
         protected void onMethodExit(int opcode) {
+            if (opcode == ATHROW) {
+                mv.visitInsn(DUP);
+                mv.visitLdcInsn(commandName);
+                mv.visitVarInsn(ALOAD, keyLocalIdx);
+                mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onCacheError",
+                    "(Ljava/lang/Throwable;Ljava/lang/String;Ljava/lang/String;)V", false);
+                return;
+            }
             if ("get".equals(commandName) && opcode == ARETURN) {
                 // Stack at ARETURN: [..., String(retVal)]
                 mv.visitInsn(DUP);                           // [..., retVal, retVal(dup)]
@@ -189,6 +195,19 @@ public class RedisPlugin implements TracerPlugin {
                     "onCacheGet", "(Ljava/lang/String;Z)V", false);
                 mv.visitLabel(afterLabel);
                 // Stack: [..., retVal] — ARETURN이 retVal 반환
+                return;
+            }
+            if (opcode == ARETURN) {
+                mv.visitVarInsn(ALOAD, keyLocalIdx);
+                if ("del".equals(commandName)) {
+                    mv.visitMethodInsn(INVOKESTATIC,
+                        "org/example/agent/core/TraceRuntime",
+                        "onCacheDel", "(Ljava/lang/String;)V", false);
+                } else {
+                    mv.visitMethodInsn(INVOKESTATIC,
+                        "org/example/agent/core/TraceRuntime",
+                        "onCacheSet", "(Ljava/lang/String;)V", false);
+                }
             }
         }
     }

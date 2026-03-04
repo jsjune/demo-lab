@@ -23,10 +23,11 @@ public class AsyncService {
     private final WebClient webClient;
 
     @Async
-    public void runAsyncTask(String label) {
+    public void runAsyncTask(String label) throws IllegalAccessException {
         log.info("[ASYNC-TEST] Executing async task for label: {}", label);
         List<User> all = userRepository.findAll();
         log.info("[ASYNC-TEST] Found {} users in background thread", all.size());
+        throw new IllegalAccessException("Intentional exception from async task: " + label);
     }
 
 }
