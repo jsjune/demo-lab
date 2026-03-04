@@ -6,10 +6,9 @@
 `trace-agent`는 ASM 기반 Java Agent로 애플리케이션 코드 수정 없이 다음 이벤트를 자동 추적합니다.
 
 - HTTP Inbound/Outbound (Spring MVC/WebFlux/RestTemplate/WebClient)
-- JDBC Query
+- JDBC Query (`DB_QUERY` 단일 완료 이벤트)
 - Kafka Produce/Consume
 - Cache (Redis)
-- File I/O
 - Async Executor
 
 수집 이벤트는 TCP로 Collector에 전송됩니다. 전송은 `single` 또는 `batch` 모드를 지원합니다.
@@ -63,6 +62,9 @@ java -javaagent:./trace-agent.jar \
 
 - 요청에 TxId가 없으면 새 txId를 생성합니다.
 - `RestTemplate`, `WebClient`, Kafka produce에 TxId 헤더를 자동 주입합니다.
+- JDBC는 쿼리당 `DB_QUERY` 1건만 전송합니다.
+  - 성공: `success=true`, `durationMs`, `extraInfo.sql`
+  - 실패: `success=false` + `errorType`, `errorMessage`, `rootCauseClass`, `rootCauseMessage`, `chainSummary`, `sqlState`, `vendorCode`
 - 예외는 에이전트 내부에서 격리되어 비즈니스 로직으로 전파되지 않습니다.
 - 종료 시 shutdown hook에서 큐 잔여 이벤트를 drain 시도합니다.
 
