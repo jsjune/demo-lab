@@ -307,6 +307,34 @@ public class TraceRuntime {
     }
 
     // -----------------------------------------------------------------------
+    // Cache (Redis) Operations
+    // -----------------------------------------------------------------------
+
+    public static void onCacheGet(String key, boolean hit) {
+        safeRun(() -> {
+            String txId = TxIdHolder.get(); if (txId == null) return;
+            Map<String, Object> extra = new HashMap<>(); extra.put("key", key);
+            TcpSender.send(createChildEvent(txId, hit ? TraceEventType.CACHE_HIT : TraceEventType.CACHE_MISS, TraceCategory.CACHE, "redis", null, true, extra));
+        });
+    }
+
+    public static void onCacheSet(String key) {
+        safeRun(() -> {
+            String txId = TxIdHolder.get(); if (txId == null) return;
+            Map<String, Object> extra = new HashMap<>(); extra.put("key", key);
+            TcpSender.send(createChildEvent(txId, TraceEventType.CACHE_SET, TraceCategory.CACHE, "redis", null, true, extra));
+        });
+    }
+
+    public static void onCacheDel(String key) {
+        safeRun(() -> {
+            String txId = TxIdHolder.get(); if (txId == null) return;
+            Map<String, Object> extra = new HashMap<>(); extra.put("key", key);
+            TcpSender.send(createChildEvent(txId, TraceEventType.CACHE_DEL, TraceCategory.CACHE, "redis", null, true, extra));
+        });
+    }
+
+    // -----------------------------------------------------------------------
     // Async / Thread Support
     // -----------------------------------------------------------------------
 
