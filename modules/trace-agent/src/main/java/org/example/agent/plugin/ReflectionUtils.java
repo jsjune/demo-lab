@@ -11,10 +11,20 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class ReflectionUtils {
 
-    private static final ConcurrentHashMap<String, Optional<Field>> fieldCache =
-        new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<String, Optional<Method>> methodCache =
-        new ConcurrentHashMap<>();
+    private static final ClassValue<ConcurrentHashMap<String, Optional<Field>>> fieldCache =
+        new ClassValue<ConcurrentHashMap<String, Optional<Field>>>() {
+            @Override
+            protected ConcurrentHashMap<String, Optional<Field>> computeValue(Class<?> type) {
+                return new ConcurrentHashMap<>();
+            }
+        };
+    private static final ClassValue<ConcurrentHashMap<String, Optional<Method>>> methodCache =
+        new ClassValue<ConcurrentHashMap<String, Optional<Method>>>() {
+            @Override
+            protected ConcurrentHashMap<String, Optional<Method>> computeValue(Class<?> type) {
+                return new ConcurrentHashMap<>();
+            }
+        };
 
     /**
      * Try each field name in order (including superclasses). Returns the value of the first
@@ -22,9 +32,9 @@ public class ReflectionUtils {
      */
     public static Optional<Object> getFieldValue(Object obj, String... fieldNames) {
         if (obj == null) return Optional.empty();
+        ConcurrentHashMap<String, Optional<Field>> classFieldCache = fieldCache.get(obj.getClass());
         for (String name : fieldNames) {
-            String key = obj.getClass().getName() + "#" + name;
-            Optional<Field> field = fieldCache.computeIfAbsent(key,
+            Optional<Field> field = classFieldCache.computeIfAbsent(name,
                 k -> findField(obj.getClass(), name));
             if (field.isPresent()) {
                 try {
@@ -41,8 +51,9 @@ public class ReflectionUtils {
      */
     public static Optional<Object> invokeMethod(Object obj, String methodName, Object... args) {
         if (obj == null) return Optional.empty();
-        String key = buildMethodKey(obj.getClass(), methodName, args);
-        Optional<Method> method = methodCache.computeIfAbsent(key,
+        ConcurrentHashMap<String, Optional<Method>> classMethodCache = methodCache.get(obj.getClass());
+        String key = buildMethodKey(methodName, args);
+        Optional<Method> method = classMethodCache.computeIfAbsent(key,
             k -> findMethod(obj.getClass(), methodName, args));
         if (method.isPresent()) {
             try {
@@ -85,8 +96,8 @@ public class ReflectionUtils {
         return Optional.empty();
     }
 
-    private static String buildMethodKey(Class<?> clazz, String name, Object[] args) {
-        StringBuilder sb = new StringBuilder(clazz.getName()).append('#').append(name);
+    private static String buildMethodKey(String name, Object[] args) {
+        StringBuilder sb = new StringBuilder(name);
         for (Object a : args) sb.append('#').append(a == null ? "null" : a.getClass().getName());
         return sb.toString();
     }

@@ -13,7 +13,6 @@ import org.example.common.TraceEventType;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -27,10 +26,18 @@ public class TraceRuntime {
     public static final String ATTR_TX_ID   = "__TRACE_TX_ID__";
     public static final String ATTR_SPAN_ID = "__TRACE_SPAN_ID__";
     private static final AtomicLong EVENT_SEQ = new AtomicLong(0);
-    private static final ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
-        GET_ATTR_CACHE = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<ClassLoader, java.lang.reflect.Method>
-        SET_ATTR_CACHE = new ConcurrentHashMap<>();
+    private static final ClassValue<java.lang.reflect.Method> GET_ATTR_CACHE = new ClassValue<java.lang.reflect.Method>() {
+        @Override
+        protected java.lang.reflect.Method computeValue(Class<?> type) {
+            return findMethod(type, "getAttribute", String.class);
+        }
+    };
+    private static final ClassValue<java.lang.reflect.Method> SET_ATTR_CACHE = new ClassValue<java.lang.reflect.Method>() {
+        @Override
+        protected java.lang.reflect.Method computeValue(Class<?> type) {
+            return findMethod(type, "setAttribute", String.class, Object.class);
+        }
+    };
 
     // ── Lifecycle (위임 없이 유지) ─────────────────────────────────────────
     public static boolean isSecondaryDispatch(Object request) {
@@ -100,16 +107,16 @@ public class TraceRuntime {
     // ── ABI: Reflection utilities ─────────────────────────────────────────
     public static Object invokeGetAttribute(Object target, String name) {
         try {
-            ClassLoader cl = target.getClass().getClassLoader();
-            java.lang.reflect.Method m = GET_ATTR_CACHE.computeIfAbsent(cl, l -> findMethod(target.getClass(), "getAttribute", String.class));
+            if (target == null) return null;
+            java.lang.reflect.Method m = GET_ATTR_CACHE.get(target.getClass());
             return m != null ? m.invoke(target, name) : null;
         } catch (Throwable t) { return null; }
     }
 
     public static void invokeSetAttribute(Object target, String name, Object val) {
         try {
-            ClassLoader cl = target.getClass().getClassLoader();
-            java.lang.reflect.Method m = SET_ATTR_CACHE.computeIfAbsent(cl, l -> findMethod(target.getClass(), "setAttribute", String.class, Object.class));
+            if (target == null) return;
+            java.lang.reflect.Method m = SET_ATTR_CACHE.get(target.getClass());
             if (m != null) m.invoke(target, name, val);
         } catch (Throwable ignored) {}
     }

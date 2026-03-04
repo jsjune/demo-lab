@@ -15,32 +15,21 @@ import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 public final class HttpEventHandler {
 
     private HttpEventHandler() {}
 
-    // ── HTTP / WebFlux 전용 리플렉션 캐시 ─────────────────────────────────
-    private static final ConcurrentHashMap<ClassLoader, Method>
-        HTTP_STATUS_CODE_METHOD_CACHE  = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<ClassLoader, Method>
-        HTTP_STATUS_VALUE_METHOD_CACHE = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<ClassLoader, Method>
-        WC_EXCEPTION_STATUS_METHOD_CACHE = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<ClassLoader, Method>
-        WF_GET_REQUEST_CACHE  = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<ClassLoader, Method>
-        WF_GET_RESPONSE_CACHE = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<ClassLoader, Method>
-        WF_REQ_METHOD_CACHE   = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<ClassLoader, Method>
-        WF_REQ_URI_CACHE      = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<ClassLoader, Method>
-        WF_REQ_HEADERS_CACHE  = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<ClassLoader, Method>
-        WF_RESP_STATUS_CACHE  = new ConcurrentHashMap<>();
+    // ── HTTP / WebFlux reflection caches (ClassValue => classloader-safe) ──
+    private static final MethodCache HTTP_STATUS_CODE_METHOD_CACHE = new MethodCache("statusCode");
+    private static final MethodCache HTTP_STATUS_VALUE_METHOD_CACHE = new MethodCache("value");
+    private static final MethodCache WF_GET_REQUEST_CACHE = new MethodCache("getRequest");
+    private static final MethodCache WF_GET_RESPONSE_CACHE = new MethodCache("getResponse");
+    private static final MethodCache WF_REQ_METHOD_CACHE = new MethodCache("getMethod");
+    private static final MethodCache WF_REQ_URI_CACHE = new MethodCache("getURI");
+    private static final MethodCache WF_REQ_HEADERS_CACHE = new MethodCache("getHeaders");
+    private static final MethodCache WF_RESP_STATUS_CACHE = new MethodCache("getStatusCode");
 
     // ── HTTP Inbound ──────────────────────────────────────────────────────
 
@@ -311,20 +300,15 @@ public final class HttpEventHandler {
 
     public static void onWfStart(Object exchange) {
         TraceRuntime.safeRun(() -> {
-            ClassLoader cl = exchange.getClass().getClassLoader();
-            Object request = resolveAndInvoke(WF_GET_REQUEST_CACHE, cl,
-                    "org.springframework.web.server.ServerWebExchange", "getRequest", exchange);
+            Object request = resolveAndInvoke(WF_GET_REQUEST_CACHE, exchange);
             if (request == null) return;
-            Object httpMethod = resolveAndInvoke(WF_REQ_METHOD_CACHE, cl,
-                    "org.springframework.http.server.reactive.ServerHttpRequest", "getMethod", request);
+            Object httpMethod = resolveAndInvoke(WF_REQ_METHOD_CACHE, request);
             String method = "UNKNOWN";
             try { method = String.valueOf(httpMethod.getClass().getMethod("name").invoke(httpMethod)); } catch (Throwable ignored) {}
-            Object uriObj = resolveAndInvoke(WF_REQ_URI_CACHE, cl,
-                    "org.springframework.http.server.reactive.ServerHttpRequest", "getURI", request);
+            Object uriObj = resolveAndInvoke(WF_REQ_URI_CACHE, request);
             String path = "/";
             try { path = String.valueOf(uriObj.getClass().getMethod("getPath").invoke(uriObj)); } catch (Throwable ignored) {}
-            Object headers = resolveAndInvoke(WF_REQ_HEADERS_CACHE, cl,
-                    "org.springframework.http.server.reactive.ServerHttpRequest", "getHeaders", request);
+            Object headers = resolveAndInvoke(WF_REQ_HEADERS_CACHE, request);
             String inTxId = null, inSpanId = null;
             if (headers != null) {
                 try {
@@ -383,16 +367,12 @@ public final class HttpEventHandler {
 
     private static int extractStatusCode(Object response) {
         try {
-            ClassLoader cl = response.getClass().getClassLoader();
-            Method scm = HTTP_STATUS_CODE_METHOD_CACHE.computeIfAbsent(cl, l -> {
-                try { return Class.forName("org.springframework.web.reactive.function.client.ClientResponse", false, l).getMethod("statusCode"); }
-                catch (Throwable t) { return null; }
-            });
+            Method scm = HTTP_STATUS_CODE_METHOD_CACHE.get(response.getClass());
+            if (scm == null) return -1;
             Object scObj = scm.invoke(response);
-            Method vm = HTTP_STATUS_VALUE_METHOD_CACHE.computeIfAbsent(cl, l -> {
-                try { return Class.forName("org.springframework.http.HttpStatusCode", false, l).getMethod("value"); }
-                catch (Throwable t) { return null; }
-            });
+            if (scObj == null) return -1;
+            Method vm = HTTP_STATUS_VALUE_METHOD_CACHE.get(scObj.getClass());
+            if (vm == null) return -1;
             return (int) vm.invoke(scObj);
         } catch (Throwable t) { return -1; }
     }
@@ -414,14 +394,11 @@ public final class HttpEventHandler {
 
     private static int extractWebFluxResponseStatus(Object exchange, ClassLoader cl) {
         try {
-            Object resp = resolveAndInvoke(WF_GET_RESPONSE_CACHE, cl,
-                    "org.springframework.web.server.ServerWebExchange", "getResponse", exchange);
-            Object sc = resolveAndInvoke(WF_RESP_STATUS_CACHE, cl,
-                    "org.springframework.http.server.reactive.ServerHttpResponse", "getStatusCode", resp);
-            Method vm = HTTP_STATUS_VALUE_METHOD_CACHE.computeIfAbsent(cl, l -> {
-                try { return Class.forName("org.springframework.http.HttpStatusCode", false, l).getMethod("value"); }
-                catch (Throwable t) { return null; }
-            });
+            Object resp = resolveAndInvoke(WF_GET_RESPONSE_CACHE, exchange);
+            Object sc = resolveAndInvoke(WF_RESP_STATUS_CACHE, resp);
+            if (sc == null) return -1;
+            Method vm = HTTP_STATUS_VALUE_METHOD_CACHE.get(sc.getClass());
+            if (vm == null) return -1;
             return (int) vm.invoke(sc);
         } catch (Throwable t) { return -1; }
     }
@@ -439,26 +416,51 @@ public final class HttpEventHandler {
 
     private static String[] extractWebFluxMethodPath(Object exchange, ClassLoader cl) {
         try {
-            Object req = resolveAndInvoke(WF_GET_REQUEST_CACHE, cl,
-                    "org.springframework.web.server.ServerWebExchange", "getRequest", exchange);
-            Object hm = resolveAndInvoke(WF_REQ_METHOD_CACHE, cl,
-                    "org.springframework.http.server.reactive.ServerHttpRequest", "getMethod", req);
+            Object req = resolveAndInvoke(WF_GET_REQUEST_CACHE, exchange);
+            Object hm = resolveAndInvoke(WF_REQ_METHOD_CACHE, req);
             String m = String.valueOf(hm.getClass().getMethod("name").invoke(hm));
-            Object uri = resolveAndInvoke(WF_REQ_URI_CACHE, cl,
-                    "org.springframework.http.server.reactive.ServerHttpRequest", "getURI", req);
+            Object uri = resolveAndInvoke(WF_REQ_URI_CACHE, req);
             String p = String.valueOf(uri.getClass().getMethod("getPath").invoke(uri));
             return new String[]{m, p};
         } catch (Throwable t) { return new String[]{"UNKNOWN", "/"}; }
     }
 
-    private static Object resolveAndInvoke(ConcurrentHashMap<ClassLoader, Method> cache,
+    // Backward-compatible overload kept for private-reflection tests.
+    @SuppressWarnings("unused")
+    private static Object resolveAndInvoke(java.util.concurrent.ConcurrentHashMap<ClassLoader, Method> cache,
                                            ClassLoader cl, String iface, String method, Object target) {
         try {
+            if (target == null) return null;
             Method m = cache.computeIfAbsent(cl, l -> {
                 try { return Class.forName(iface, false, l).getMethod(method); }
                 catch (Throwable t) { return null; }
             });
             return m != null ? m.invoke(target) : null;
         } catch (Throwable t) { return null; }
+    }
+
+    private static Object resolveAndInvoke(MethodCache cache, Object target) {
+        try {
+            if (target == null) return null;
+            Method m = cache.get(target.getClass());
+            return m != null ? m.invoke(target) : null;
+        } catch (Throwable t) { return null; }
+    }
+
+    private static final class MethodCache {
+        private final ClassValue<Method> cache;
+
+        private MethodCache(String methodName) {
+            this.cache = new ClassValue<Method>() {
+                @Override
+                protected Method computeValue(Class<?> type) {
+                    return TraceRuntime.findMethod(type, methodName);
+                }
+            };
+        }
+
+        private Method get(Class<?> type) {
+            return cache.get(type);
+        }
     }
 }
