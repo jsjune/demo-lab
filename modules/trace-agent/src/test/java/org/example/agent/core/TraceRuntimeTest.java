@@ -232,9 +232,6 @@ class TraceRuntimeTest {
         TraceRuntime.attachCacheGetListener(new CompletableFuture<>(), "k");
         TraceRuntime.attachCacheOpListener(new CompletableFuture<>(), "set", "k");
 
-        TraceRuntime.onFileReadError("/tmp/a", 1L, 1L, new RuntimeException("io-r"));
-        TraceRuntime.onFileWriteError("/tmp/b", 1L, 1L, new RuntimeException("io-w"));
-
         Object sameMono = new Object();
         assertSame(sameMono, TraceRuntime.wrapWebClientExchange(sameMono, "GET", "http://localhost/x"));
         assertSame(sameMono, TraceRuntime.wrapWebFluxHandle(sameMono, new Object(), System.currentTimeMillis()));

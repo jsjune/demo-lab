@@ -8,7 +8,7 @@ package org.example.agent.core;
  *   <li>Set at: {@code onHttpInStart()}, {@code onMqConsumeStart()}
  *   <li>Read at: {@code onHttpInEnd()}, {@code onHttpInError()},
  *       {@code onMqConsumeEnd()}, {@code onMqConsumeError()},
- *       and all child-span-creating methods (DB, Cache, IO, HTTP_OUT, MQ_PRODUCE)
+ *       and all child-span-creating methods (DB, Cache, HTTP_OUT, MQ_PRODUCE)
  *   <li>Cleared at: {@code onHttpInEnd()}, {@code onHttpInError()},
  *       {@code onMqConsumeEnd()}, {@code onMqConsumeError()} — always after TxIdHolder.clear()
  * </ul>

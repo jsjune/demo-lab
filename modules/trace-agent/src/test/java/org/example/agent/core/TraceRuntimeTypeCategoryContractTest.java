@@ -90,17 +90,6 @@ class TraceRuntimeTypeCategoryContractTest {
     }
 
     @Test
-    void ioTypeAndCategoryContract() {
-        TraceRuntime.onHttpInStart(null, "GET", "/contract/io", "tx-io-1", null, false);
-        TraceRuntime.onFileRead("/tmp/a.txt", 10L, 1L, true);
-        TraceRuntime.onFileWrite("/tmp/a.txt", 20L, 2L, true);
-        TraceRuntime.onHttpInEnd("GET", "/contract/io", 200, 11L);
-
-        assertEvent(TraceEventType.FILE_READ, TraceCategory.IO);
-        assertEvent(TraceEventType.FILE_WRITE, TraceCategory.IO);
-    }
-
-    @Test
     void asyncTypeAndCategoryContract() {
         TxIdHolder.set("tx-async-1");
         SpanIdHolder.set("span-parent-1");

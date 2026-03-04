@@ -5,7 +5,6 @@ import org.example.agent.core.handler.AsyncEventHandler;
 import org.example.agent.core.handler.CacheEventHandler;
 import org.example.agent.core.handler.DbEventHandler;
 import org.example.agent.core.handler.HttpEventHandler;
-import org.example.agent.core.handler.IoEventHandler;
 import org.example.agent.core.handler.MqEventHandler;
 import org.example.common.TraceCategory;
 import org.example.common.TraceEvent;
@@ -92,12 +91,6 @@ public class TraceRuntime {
     public static void onCacheError(Throwable t, String op, String key)                    { CacheEventHandler.onError(t, op, key); }
     public static void attachCacheGetListener(Object futureLike, String key)               { CacheEventHandler.attachGetListener(futureLike, key); }
     public static void attachCacheOpListener(Object futureLike, String op, String key)     { CacheEventHandler.attachOpListener(futureLike, op, key); }
-
-    // ── ABI: File I/O ─────────────────────────────────────────────────────
-    public static void onFileRead(String p, long b, long ms, boolean s)                    { IoEventHandler.onRead(p, b, ms, s); }
-    public static void onFileWrite(String p, long b, long ms, boolean s)                   { IoEventHandler.onWrite(p, b, ms, s); }
-    public static void onFileReadError(String p, long b, long ms, Throwable t)             { IoEventHandler.onReadError(p, b, ms, t); }
-    public static void onFileWriteError(String p, long b, long ms, Throwable t)            { IoEventHandler.onWriteError(p, b, ms, t); }
 
     // ── ABI: Async ────────────────────────────────────────────────────────
     public static String onAsyncStart(String task)                                         { return AsyncEventHandler.onStart(task); }

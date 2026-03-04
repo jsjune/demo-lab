@@ -11,7 +11,6 @@
     --cat-db:    #059669;
     --cat-cache: #d97706;
     --cat-mq:    #7c3aed;
-    --cat-io:    #64748b;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -208,7 +207,6 @@ button:hover, .btn:hover { background-color: #1d4ed8; }
 .filter-chip.chip-db.active    { background: var(--cat-db);    border-color: var(--cat-db); }
 .filter-chip.chip-cache.active { background: var(--cat-cache); border-color: var(--cat-cache); }
 .filter-chip.chip-mq.active    { background: var(--cat-mq);    border-color: var(--cat-mq); }
-.filter-chip.chip-io.active    { background: var(--cat-io);    border-color: var(--cat-io); }
 
 .filter-sep { width: 1px; height: 18px; background: var(--border-color); margin: 0 0.25rem; }
 
@@ -331,7 +329,6 @@ tr.extra-row:hover { background-color: #fafafa; }
 .cat-DB    { background: var(--cat-db); }
 .cat-CACHE { background: var(--cat-cache); }
 .cat-MQ    { background: var(--cat-mq); }
-.cat-IO    { background: var(--cat-io); }
 
 /* ── Summary stats ─────────────────────────────── */
 .stats-grid {

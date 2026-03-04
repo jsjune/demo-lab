@@ -93,7 +93,6 @@
             <button class="filter-chip chip-db"   id="chip-db"        onclick="setCatFilter('DB')">DB</button>
             <button class="filter-chip chip-cache" id="chip-cache"    onclick="setCatFilter('CACHE')">CACHE</button>
             <button class="filter-chip chip-mq"   id="chip-mq"        onclick="setCatFilter('MQ')">MQ</button>
-            <button class="filter-chip chip-io"   id="chip-io"        onclick="setCatFilter('IO')">IO</button>
         </div>
 
         <div class="result-count" id="resultCount"></div>
@@ -189,10 +188,10 @@
 
         function setCatFilter(val) {
             catFilter = val;
-            ['chip-all-cat','chip-http','chip-db','chip-cache','chip-mq','chip-io'].forEach(id =>
+            ['chip-all-cat','chip-http','chip-db','chip-cache','chip-mq'].forEach(id =>
                 document.getElementById(id).classList.remove('active'));
             const map = { all:'chip-all-cat', HTTP:'chip-http', DB:'chip-db',
-                          CACHE:'chip-cache', MQ:'chip-mq', IO:'chip-io' };
+                          CACHE:'chip-cache', MQ:'chip-mq' };
             const el = document.getElementById(map[val]);
             if (el) el.classList.add('active');
             applyFilters();

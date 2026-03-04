@@ -50,7 +50,7 @@ class AgentConfigTest {
     void testPluginStatus() {
         assertTrue(AgentConfig.isPluginEnabled("http"));
         assertTrue(AgentConfig.isPluginEnabled("jdbc"));
-        assertFalse(AgentConfig.isPluginEnabled("file-io"));
+        assertTrue(AgentConfig.isPluginEnabled("executor"));
     }
 
     @Test
