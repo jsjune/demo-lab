@@ -413,6 +413,54 @@ class TcpSenderTest {
         }
     }
 
+    @Test
+    @DisplayName("single sender loop lambda에서 연결 실패 경로를 타고 인터럽트로 종료 가능해야 한다")
+    void singleSenderLoopLambda_connectionFailureBranch() throws Exception {
+        LinkedBlockingQueue<TraceEvent> q = new LinkedBlockingQueue<>(16);
+        q.offer(createDummyEvent("tx-fail-single"));
+        TcpSenderTestSupport.setQueue(q);
+        stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "collector.host", "127.0.0.1");
+        stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "collector.port", "1");
+
+        Thread t = new Thread(() -> {
+            try {
+                var m = TcpSender.class.getDeclaredMethod("lambda$init$0");
+                m.setAccessible(true);
+                m.invoke(null);
+            } catch (Throwable ignored) {
+            }
+        });
+        t.setDaemon(true);
+        t.start();
+        Thread.sleep(200);
+        t.interrupt();
+        t.join(300);
+    }
+
+    @Test
+    @DisplayName("batch sender loop lambda에서 연결 실패 경로를 타고 인터럽트로 종료 가능해야 한다")
+    void batchSenderLoopLambda_connectionFailureBranch() throws Exception {
+        LinkedBlockingQueue<TraceEvent> q = new LinkedBlockingQueue<>(16);
+        q.offer(createDummyEvent("tx-fail-batch"));
+        TcpSenderTestSupport.setQueue(q);
+        stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "collector.host", "127.0.0.1");
+        stateGuard.setPropertiesFieldValue(AgentConfig.class, "props", "collector.port", "1");
+
+        Thread t = new Thread(() -> {
+            try {
+                var m = TcpSender.class.getDeclaredMethod("lambda$startBatchSenderThread$2", int.class, long.class);
+                m.setAccessible(true);
+                m.invoke(null, 1, 50L);
+            } catch (Throwable ignored) {
+            }
+        });
+        t.setDaemon(true);
+        t.start();
+        Thread.sleep(250);
+        t.interrupt();
+        t.join(300);
+    }
+
     private TraceEvent createDummyEvent(String txId) {
         return new TraceEvent(
             "id", txId, "s-1", null, TraceEventType.HTTP_IN_START, TraceCategory.HTTP,

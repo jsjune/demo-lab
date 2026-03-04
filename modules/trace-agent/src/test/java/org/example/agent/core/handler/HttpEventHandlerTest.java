@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.junit.jupiter.api.*;
 import org.mockito.MockedStatic;
+import org.example.agent.core.TxIdGenerator;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
@@ -315,6 +316,44 @@ class HttpEventHandlerTest {
 
         assertNotNull(req.asyncContext.listener);
         assertEquals(Boolean.TRUE, req.getAttribute("__TRACE_ASYNC_REGISTERED__"));
+    }
+
+    @Test
+    @DisplayName("T-25: register 이미 등록된 요청이면 재등록하지 않음")
+    void register_alreadyRegistered_noop() {
+        AsyncCapableRequest req = new AsyncCapableRequest();
+        req.setAttribute("__TRACE_ASYNC_REGISTERED__", Boolean.TRUE);
+        req.setAttribute("__TRACE_TX_ID__", "tx-r");
+        req.setAttribute("__TRACE_SPAN_ID__", "span-r");
+
+        HttpEventHandler.register(req, "GET", "/x", System.currentTimeMillis());
+        assertNull(req.asyncContext.listener);
+    }
+
+    @Test
+    @DisplayName("T-26: register txId 없으면 listener 등록하지 않음")
+    void register_withoutTxId_noop() {
+        AsyncCapableRequest req = new AsyncCapableRequest();
+        HttpEventHandler.register(req, "GET", "/x", System.currentTimeMillis());
+        assertNull(req.asyncContext.listener);
+    }
+
+    @Test
+    @DisplayName("T-27: onOut txId 없으면 no-op")
+    void onOut_withoutTxId_noop() {
+        HttpEventHandler.onOut("GET", "http://localhost/no-tx", 200, 1L);
+        assertTrue(capturedEvents.isEmpty());
+    }
+
+    @Test
+    @DisplayName("T-28: onInStart 샘플링 false면 이벤트 전송하지 않음")
+    void onInStart_samplingFalse_skips() {
+        try (MockedStatic<TxIdGenerator> gen = mockStatic(TxIdGenerator.class)) {
+            gen.when(TxIdGenerator::shouldSample).thenReturn(false);
+            HttpEventHandler.onInStart(new FakeRequest(), "GET", "/sampled", null, null, false);
+            assertTrue(capturedEvents.isEmpty());
+            assertNull(TxIdHolder.get());
+        }
     }
 
     @Test

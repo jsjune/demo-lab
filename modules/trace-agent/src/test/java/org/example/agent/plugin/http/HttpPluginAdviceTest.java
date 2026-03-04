@@ -193,6 +193,45 @@ class HttpPluginAdviceTest {
             );
         }
 
+        @Test
+        @DisplayName("onMethodExit(ATHROW) 시 onHttpOutError 호출")
+        void onMethodExit_throw_callsOutError() {
+            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
+            HttpPlugin.RestTemplateAdvice advice =
+                new RestTemplateAdviceFixed(mv, Opcodes.ACC_PROTECTED, "doExecute",
+                    "(Ljava/net/URI;Lorg/springframework/http/HttpMethod;Lorg/springframework/web/client/RequestCallback;Lorg/springframework/web/client/ResponseExtractor;)Ljava/lang/Object;");
+
+            advice.onMethodExit(Opcodes.ATHROW);
+
+            verify(mv, atLeastOnce()).visitMethodInsn(
+                eq(Opcodes.INVOKESTATIC),
+                eq("org/example/agent/core/TraceRuntime"),
+                eq("onHttpOutError"),
+                eq("(Ljava/lang/Throwable;Ljava/lang/String;Ljava/lang/String;J)V"),
+                eq(false)
+            );
+        }
+
+        @Test
+        @DisplayName("Spring 6.1 doExecute(5 args)에서도 HTTP method 인덱스를 올바르게 사용")
+        void onMethodExit_spring61Descriptor_usesMethodIndex3() {
+            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
+            HttpPlugin.RestTemplateAdvice advice =
+                new RestTemplateAdviceFixed(mv, Opcodes.ACC_PROTECTED, "doExecute",
+                    "(Ljava/net/URI;Ljava/lang/String;Lorg/springframework/http/HttpMethod;Lorg/springframework/web/client/RequestCallback;Lorg/springframework/web/client/ResponseExtractor;)Ljava/lang/Object;");
+
+            advice.onMethodExit(Opcodes.ARETURN);
+
+            verify(mv, atLeastOnce()).visitVarInsn(eq(Opcodes.ALOAD), eq(3));
+            verify(mv, atLeastOnce()).visitMethodInsn(
+                eq(Opcodes.INVOKESTATIC),
+                eq("org/example/agent/core/TraceRuntime"),
+                eq("onHttpOut"),
+                eq("(Ljava/lang/String;Ljava/lang/String;IJ)V"),
+                eq(false)
+            );
+        }
+
         // Helper to expose internal advice for testing
         class RestTemplateAdviceFixed extends HttpPlugin.RestTemplateAdvice {
             RestTemplateAdviceFixed(MethodVisitor mv, int access, String name, String desc) {
