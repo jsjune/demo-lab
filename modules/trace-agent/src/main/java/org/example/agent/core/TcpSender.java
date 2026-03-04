@@ -82,7 +82,70 @@ public class TcpSender {
             daemon.setName("trace-agent-sender");
             daemon.start();
         }
+        // ─────────────────────────────────────────────────────────
+        // Shutdown Hook: drain remaining events before JVM exits
+        // ─────────────────────────────────────────────────────────
+        long drainTimeoutMs = AgentConfig.getShutdownDrainTimeoutMs();
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            Thread drainThread = new Thread(TcpSender::drain, "trace-agent-drain");
+            drainThread.start();
+            try {
+                drainThread.join(drainTimeoutMs);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+            if (drainThread.isAlive()) {
+                AgentLogger.warn("[Shutdown] Drain timed out after " + drainTimeoutMs + "ms. Forcing exit.");
+            }
+        }, "trace-agent-shutdown"));
+        // ─────────────────────────────────────────────────────────
+
         initialized = true;
+    }
+
+    /**
+     * Drains all remaining queue events and sends them to the Collector over a fresh TCP
+     * connection. Called exclusively from the shutdown hook — after daemon sender threads
+     * have been terminated by the JVM.
+     *
+     * <p>Swallows all exceptions: shutdown hooks must not propagate failures.
+     */
+    private static void drain() {
+        BlockingQueue<TraceEvent> q = queue;
+        if (q == null) return;
+
+        List<TraceEvent> remaining = new ArrayList<>();
+        q.drainTo(remaining);
+        if (remaining.isEmpty()) return;
+
+        AgentLogger.info("[Shutdown] Draining " + remaining.size() + " events to Collector...");
+        try (Socket s = new Socket()) {
+            s.connect(
+                new InetSocketAddress(AgentConfig.getCollectorHost(), AgentConfig.getCollectorPort()),
+                2000
+            );
+            PrintWriter w = new PrintWriter(s.getOutputStream(), true);
+            drainTo(remaining, w);
+            AgentLogger.info("[Shutdown] Drain complete. Sent " + remaining.size() + " events.");
+        } catch (Exception e) {
+            AgentLogger.warn("[Shutdown] Drain failed (Collector may be down): " + e.getMessage());
+            // No exception propagation — Shutdown Hook must exit cleanly.
+        }
+    }
+
+    /**
+     * Serializes {@code events} to {@code writer}, one JSON line per event.
+     * Package-private for unit testing without a real TCP connection.
+     *
+     * @throws IOException if the underlying writer reports an error after serialization
+     */
+    static void drainTo(List<TraceEvent> events, PrintWriter writer) throws Exception {
+        for (TraceEvent e : events) {
+            writer.println(mapper.writeValueAsString(e));
+        }
+        if (writer.checkError()) {
+            throw new IOException("PrintWriter error during drain");
+        }
     }
 
     private static void startBatchSenderThread() {

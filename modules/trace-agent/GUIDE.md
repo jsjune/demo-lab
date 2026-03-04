@@ -23,7 +23,7 @@ JVM 시작 옵션에 `-javaagent` 설정을 추가하여 실행합니다. 에이
 java -javaagent:./trace-agent.jar \
      -Dtrace.agent.server-name=order-service \
      -Dtrace.agent.collector.host=localhost \
-     -Dtrace.agent.collector.port=9090 \
+     -Dtrace.agent.collector.port=9200 \
      -Dtrace.agent.header-key=X-Trace-Id \
      -jar your-app.jar
 ```
@@ -48,3 +48,46 @@ java -javaagent:./trace-agent.jar \
 ## 5. 트러블슈팅
 - **로그 확인**: 에이전트 기동 시 콘솔에 `[TRACE AGENT] Premain started` 메시지가 출력되는지 확인하세요.
 - **연결 확인**: Collector 서버가 띄워져 있지 않아도 애플리케이션은 정상 작동하며, 에이전트는 내부 큐에 이벤트를 보관하다가 연결이 복구되면 재전송을 시도합니다.
+
+## 6. 테스트 방법
+
+### 6.1 TraceEventType / TraceCategory 계약 테스트
+`TraceRuntime`가 각 범주(`TraceCategory`)에 맞는 이벤트 타입(`TraceEventType`)을 발행하는지 확인합니다.
+
+```bash
+./gradlew :modules:trace-agent:test \
+  --tests "org.example.agent.core.TraceRuntimeTypeCategoryContractTest" \
+  --no-daemon
+```
+
+검증 대상:
+- `HTTP`: `HTTP_IN_START`, `HTTP_IN_END`, `HTTP_OUT`
+- `DB`: `DB_QUERY_START`, `DB_QUERY_END`
+- `MQ`: `MQ_PRODUCE`, `MQ_CONSUME_START`, `MQ_CONSUME_END`
+- `CACHE`: `CACHE_HIT`, `CACHE_MISS`, `CACHE_SET`, `CACHE_DEL`
+- `IO`: `FILE_READ`, `FILE_WRITE`
+- `ASYNC`: `ASYNC_START`, `ASYNC_END`
+
+### 6.2 Java Agent E2E 스모크 테스트 (txId 전파 포함)
+실제 별도 JVM 프로세스에 `-javaagent`를 붙여 실행하고, 내장 Fake Collector로 수집 이벤트를 검증합니다.
+
+사전 빌드:
+```bash
+./gradlew :modules:trace-agent:shadowJar :modules:trace-e2e-server:bootJar --no-daemon
+```
+
+E2E 실행:
+```bash
+./gradlew "-Dtrace.e2e.enabled=true" :modules:trace-agent:test \
+  --tests "org.example.agent.e2e.TraceAgentE2ESmokeTest" \
+  --no-daemon
+```
+
+기본값으로 E2E 테스트는 비활성화되어 있으며(`trace.e2e.enabled=false`), 위 시스템 프로퍼티를 명시했을 때만 실행됩니다.
+
+검증 항목:
+- `HTTP_IN_START/END` 생성
+- `ASYNC_START/END` 생성
+- `RestTemplate`, `RestClient`, `WebClient` 경유 `HTTP_OUT` 생성
+- outbound 호출 시 downstream inbound까지 `txId` 전파
+- `X-Tx-Id` incoming 헤더 수용(adopt)

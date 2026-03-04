@@ -335,6 +335,44 @@ public class TraceRuntime {
     }
 
     // -----------------------------------------------------------------------
+    // File I/O Operations
+    // -----------------------------------------------------------------------
+
+    public static void onFileRead(String path, long sizeBytes, long durationMs, boolean success) {
+        safeRun(() -> {
+            String txId = TxIdHolder.get(); if (txId == null) return;
+            Map<String, Object> extra = new LinkedHashMap<>();
+            extra.put("sizeBytes", sizeBytes);
+            TcpSender.send(createChildEvent(
+                txId,
+                TraceEventType.FILE_READ,
+                TraceCategory.IO,
+                path != null ? path : "unknown-file",
+                durationMs,
+                success,
+                extra
+            ));
+        });
+    }
+
+    public static void onFileWrite(String path, long sizeBytes, long durationMs, boolean success) {
+        safeRun(() -> {
+            String txId = TxIdHolder.get(); if (txId == null) return;
+            Map<String, Object> extra = new LinkedHashMap<>();
+            extra.put("sizeBytes", sizeBytes);
+            TcpSender.send(createChildEvent(
+                txId,
+                TraceEventType.FILE_WRITE,
+                TraceCategory.IO,
+                path != null ? path : "unknown-file",
+                durationMs,
+                success,
+                extra
+            ));
+        });
+    }
+
+    // -----------------------------------------------------------------------
     // Async / Thread Support
     // -----------------------------------------------------------------------
 

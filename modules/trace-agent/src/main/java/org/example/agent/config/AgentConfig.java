@@ -198,10 +198,11 @@ public class AgentConfig {
         return new ArrayList<>(resolved);
     }
 
-    public static int  getBufferCapacity() { return getInt("buffer.capacity", 1000); }
-    public static String getSenderMode()   { return get("sender.mode", "single"); }
-    public static int    getBatchSize()    { return getInt("sender.batch.size", 50); }
-    public static long   getBatchFlushMs() { return getLong("sender.batch.flush-ms", 500); }
+    public static int  getBufferCapacity()        { return getInt("buffer.capacity", 1000); }
+    public static String getSenderMode()          { return get("sender.mode", "single"); }
+    public static int    getBatchSize()           { return getInt("sender.batch.size", 50); }
+    public static long   getBatchFlushMs()        { return getLong("sender.batch.flush-ms", 500); }
+    public static long   getShutdownDrainTimeoutMs() { return getLong("shutdown.drain-timeout-ms", 3000); }
     public static long getSlowQueryMs()  { return getLong("slow-query-ms", 500); }
     public static long getMinSizeBytes() { return getLong("min-size-bytes", 1024); }
 

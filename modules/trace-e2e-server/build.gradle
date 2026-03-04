@@ -1,0 +1,23 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.4.3'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+bootRun {
+    jvmArgs "-javaagent:${project.rootDir}/modules/trace-agent/build/libs/trace-agent-0.0.1-SNAPSHOT.jar",
+            "-Dtrace.agent.server-name=trace-e2e-server",
+            "-Dtrace.agent.collector.host=127.0.0.1",
+            "-Dtrace.agent.collector.port=9200",
+            "-Dtrace.agent.sampling.rate=1.0"
+}
+
+test {
+    useJUnitPlatform()
+}
