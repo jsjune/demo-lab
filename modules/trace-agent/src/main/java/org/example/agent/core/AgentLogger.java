@@ -3,6 +3,7 @@ package org.example.agent.core;
 import org.example.agent.config.AgentConfig;
 
 import java.io.File;
+import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.logging.FileHandler;
@@ -37,28 +38,8 @@ public class AgentLogger {
             // 2. Setup File Handler
             String pattern = AgentConfig.getLogFilePath();
             ensureDirectory(pattern);
-            
-            FileHandler fileHandler = new FileHandler(
-                pattern, 
-                AgentConfig.getLogFileLimit(), 
-                AgentConfig.getLogFileCount(), 
-                true
-            );
-            
-            Formatter formatter = new Formatter() {
-                private final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-                @Override
-                public String format(LogRecord record) {
-                    return String.format("[%s] [%-7s] %s%n",
-                        sdf.format(new Date(record.getMillis())),
-                        translateLevel(record.getLevel()),
-                        record.getMessage()
-                    );
-                }
-            };
 
-            fileHandler.setFormatter(formatter);
-            fileHandler.setLevel(level);
+            FileHandler fileHandler = getFileHandler(pattern, level);
             logger.addHandler(fileHandler);
 
             initialized = true;
@@ -67,6 +48,31 @@ public class AgentLogger {
         } catch (Exception e) {
             System.err.println("[TRACE AGENT] Failed to initialize file logger: " + e.getMessage());
         }
+    }
+
+    private static FileHandler getFileHandler(String pattern, Level level) throws IOException {
+        FileHandler fileHandler = new FileHandler(
+                pattern,
+            AgentConfig.getLogFileLimit(),
+            AgentConfig.getLogFileCount(),
+            true
+        );
+
+        Formatter formatter = new Formatter() {
+            private final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+            @Override
+            public String format(LogRecord record) {
+                return String.format("[%s] [%-7s] %s%n",
+                    sdf.format(new Date(record.getMillis())),
+                    translateLevel(record.getLevel()),
+                    record.getMessage()
+                );
+            }
+        };
+
+        fileHandler.setFormatter(formatter);
+        fileHandler.setLevel(level);
+        return fileHandler;
     }
 
     private static String translateLevel(Level level) {
