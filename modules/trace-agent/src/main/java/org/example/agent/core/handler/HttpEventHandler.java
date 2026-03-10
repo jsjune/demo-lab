@@ -4,7 +4,6 @@ import org.example.agent.config.AgentConfig;
 import org.example.agent.core.AgentLogger;
 import org.example.agent.core.ReactorContextHolder;
 import org.example.agent.core.SpanIdHolder;
-import org.example.agent.core.TcpSender;
 import org.example.agent.core.TraceRuntime;
 import org.example.agent.core.TxIdGenerator;
 import org.example.agent.core.TxIdHolder;

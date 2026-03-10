@@ -81,4 +81,36 @@ class ContextCapturingCallableTest {
         assertNull(afterTx.get());
         assertNull(afterSpan.get());
     }
+
+    @Test
+    @DisplayName("T-03: Throwable that is not Exception/Error is wrapped into RuntimeException")
+    void nonExceptionErrorThrowable_wrappedInRuntimeException() {
+        TxIdHolder.set("test-tx-ccc"); // Set TxId to enter protected block
+        Throwable rawThrowable = new Throwable("Direct Throwable");
+        ContextCapturingCallable<String> wrapper = new ContextCapturingCallable<>(() -> {
+            // Unsafe cast to Callable to throw raw Throwable
+            throw sneakyThrow(rawThrowable);
+        });
+
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> wrapper.call());
+        assertSame(rawThrowable, ex.getCause());
+    }
+
+    @Test
+    @DisplayName("T-04: Exception is thrown as-is and NOT wrapped")
+    void exception_isNotWrapped() {
+        TxIdHolder.set("test-tx-ccc");
+        Exception original = new Exception("Original Exception");
+        ContextCapturingCallable<String> wrapper = new ContextCapturingCallable<>(() -> {
+            throw original;
+        });
+
+        Exception caught = assertThrows(Exception.class, () -> wrapper.call());
+        assertSame(original, caught);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <E extends Throwable> E sneakyThrow(Throwable t) throws E {
+        throw (E) t;
+    }
 }

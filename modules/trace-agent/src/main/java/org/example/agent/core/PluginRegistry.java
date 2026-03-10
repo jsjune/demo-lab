@@ -10,15 +10,18 @@ public class PluginRegistry {
 
     public static synchronized void load() {
         if (!activePlugins.isEmpty()) return;
-        ServiceLoader<TracerPlugin> loader = ServiceLoader.load(TracerPlugin.class);
-        for (TracerPlugin plugin : loader) {
-            if (plugin.isEnabled(null)) {
+        load(ServiceLoader.load(TracerPlugin.class));
+    }
+
+    static void load(Iterable<TracerPlugin> plugins) {
+        for (TracerPlugin plugin : plugins) {
+            if (plugin.isEnabled()) {
                 try {
-                    plugin.init(null);
+                    plugin.init();
                     activePlugins.add(plugin);
                     AgentLogger.info("Loaded plugin: " + plugin.pluginId() + " (order=" + plugin.order() + ")");
-                } catch (Exception e) {
-                    AgentLogger.warn("Failed to load plugin " + plugin.pluginId() + ": " + e.getMessage());
+                } catch (Throwable t) {
+                    AgentLogger.warn("Failed to load plugin " + plugin.pluginId() + ": " + t.getMessage());
                 }
             } else {
                 AgentLogger.info("Plugin disabled: " + plugin.pluginId());

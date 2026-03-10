@@ -38,7 +38,8 @@ public class ContextCapturingCallable<V> implements Callable<V> {
         } catch (Throwable t) {
             TraceRuntime.onAsyncError(t);
             if (t instanceof Exception) throw (Exception) t;
-            throw (Error) t;
+            if (t instanceof Error) throw (Error) t;
+            throw new RuntimeException(t);
         } finally {
             long duration = System.currentTimeMillis() - startTime;
             TraceRuntime.onAsyncEnd("Async-Callable", asyncSpanId, duration);

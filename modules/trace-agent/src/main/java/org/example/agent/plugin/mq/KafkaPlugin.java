@@ -29,7 +29,7 @@ public class KafkaPlugin implements TracerPlugin {
 
     @Override
     public AgentBuilder install(AgentBuilder builder) {
-        if (!isEnabled(null)) return builder;
+        if (!isEnabled()) return builder;
 
         ClassFileLocator agentLocator = AgentInitializer.getAgentLocator();
 

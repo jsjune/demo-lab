@@ -26,7 +26,7 @@ public class ExecutorPlugin implements TracerPlugin {
     @Override
     public AgentBuilder install(AgentBuilder builder) {
         // Respect per-plugin enabled flag from AgentConfig
-        if (!isEnabled(null)) return builder;
+        if (!isEnabled()) return builder;
 
         ClassFileLocator agentLocator = AgentInitializer.getAgentLocator();
 

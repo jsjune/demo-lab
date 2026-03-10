@@ -80,6 +80,76 @@ class PluginRegistryTest {
         assertEquals(List.of("p1", "p2"), order);
     }
 
+    @Test
+    @DisplayName("init()에서 예외가 발생한 플러그인은 무시하고 다른 플러그인을 로드해야 한다")
+    void load_skipsPluginWhenInitFails() throws Exception {
+        List<TracerPlugin> activeList = activePlugins();
+        activeList.clear();
+
+        TracerPlugin failing = new FakePlugin("fail", false) {
+            @Override public void init() { throw new RuntimeException("Init failed"); }
+        };
+        TracerPlugin success = new FakePlugin("success", false);
+
+        PluginRegistry.load(List.of(failing, success));
+
+        List<String> activeIds = PluginRegistry.activePluginIds();
+        assertFalse(activeIds.contains("fail"), "Init 실패한 플러그인은 포함되지 않아야 함");
+        assertTrue(activeIds.contains("success"), "다른 정상 플러그인은 포함되어야 함");
+    }
+
+    @Test
+    @DisplayName("init()에서 Error가 발생한 플러그인도 무시하고 다른 플러그인을 로드해야 한다")
+    void load_skipsPluginWhenInitFailsWithError() throws Exception {
+        List<TracerPlugin> activeList = activePlugins();
+        activeList.clear();
+
+        TracerPlugin failing = new FakePlugin("fail-error", false) {
+            @Override public void init() { throw new NoClassDefFoundError("Error simulated"); }
+        };
+        TracerPlugin success = new FakePlugin("success-2", false);
+
+        PluginRegistry.load(List.of(failing, success));
+
+        List<String> activeIds = PluginRegistry.activePluginIds();
+        assertFalse(activeIds.contains("fail-error"), "Error 발생한 플러그인은 포함되지 않아야 함");
+        assertTrue(activeIds.contains("success-2"), "다른 정상 플러그인은 포함되어야 함");
+    }
+
+    @Test
+    @DisplayName("load()는 플러그인을 order() 순서에 따라 정렬해야 한다")
+    void load_sortsPluginsByOrder() throws Exception {
+        List<TracerPlugin> activeList = activePlugins();
+        activeList.clear();
+
+        TracerPlugin p1 = new FakePlugin("p1", false) { @Override public int order() { return 200; } };
+        TracerPlugin p2 = new FakePlugin("p2", false) { @Override public int order() { return 100; } };
+        TracerPlugin p3 = new FakePlugin("p3", false) { @Override public int order() { return 150; } };
+
+        PluginRegistry.load(List.of(p1, p2, p3));
+
+        List<String> ids = PluginRegistry.activePluginIds();
+        assertEquals(List.of("p2", "p3", "p1"), ids, "플러그인은 order 오름차순으로 정렬되어야 함");
+    }
+
+    @Test
+    @DisplayName("load()는 isEnabled()가 false인 플러그인을 무시해야 한다")
+    void load_skipsDisabledPlugins() throws Exception {
+        List<TracerPlugin> activeList = activePlugins();
+        activeList.clear();
+
+        TracerPlugin enabled = new FakePlugin("enabled", false);
+        TracerPlugin disabled = new FakePlugin("disabled", false) {
+            @Override public boolean isEnabled() { return false; }
+        };
+
+        PluginRegistry.load(List.of(enabled, disabled));
+
+        List<String> ids = PluginRegistry.activePluginIds();
+        assertTrue(ids.contains("enabled"));
+        assertFalse(ids.contains("disabled"), "비활성화된 플러그인은 로드되지 않아야 함");
+    }
+
     @SuppressWarnings("unchecked")
     private List<TracerPlugin> activePlugins() throws Exception {
         Field f = PluginRegistry.class.getDeclaredField("activePlugins");

@@ -1,7 +1,6 @@
 package org.example.agent.core.handler;
 
 import org.example.agent.core.AgentLogger;
-import org.example.agent.core.TcpSender;
 import org.example.agent.core.TraceRuntime;
 import org.example.agent.core.TxIdHolder;
 import org.example.common.TraceCategory;
