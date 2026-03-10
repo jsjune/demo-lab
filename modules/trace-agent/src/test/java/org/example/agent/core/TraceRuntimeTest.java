@@ -280,4 +280,74 @@ class TraceRuntimeTest {
 
     static class ChildCarrier extends ParentCarrier {
     }
+
+    // --- fixtures for interface hierarchy tests ---
+    interface WorkableBase { default void doWork() {} }
+    interface WorkableExtended extends WorkableBase {}
+    abstract static class AbstractWorker implements WorkableBase {}
+    static class ConcreteWorker extends AbstractWorker {}
+    static class ConcreteWorkerExtended implements WorkableExtended {}
+
+    interface Level3 { default void deepMethod() {} }
+    interface Level2 extends Level3 {}
+    interface Level1 extends Level2 {}
+    abstract static class AbstractLevel1Impl implements Level1 {}
+    static class DeepConcreteChild extends AbstractLevel1Impl {}
+
+    @Nested
+    @DisplayName("findMethod 인터페이스 계층 탐색 테스트")
+    class FindMethodInterfaceTest {
+
+        @Test
+        @DisplayName("findMethod는 슈퍼클래스가 구현한 인터페이스의 메서드를 찾는다")
+        void findMethod_findsMethodInSuperclassInterface() {
+            // ConcreteWorker extends AbstractWorker which implements WorkableBase
+            // ConcreteWorker.getInterfaces() = [], current code misses it
+            assertNotNull(TraceRuntime.findMethod(ConcreteWorker.class, "doWork"));
+        }
+
+        @Test
+        @DisplayName("findMethod는 슈퍼클래스 인터페이스 깊이 2 이상도 탐색한다 (depth>=2, cycle-safe)")
+        void findMethod_findsDeepInterfaceMethodViaSuperclass() {
+            // DeepConcreteChild extends AbstractLevel1Impl implements Level1 extends Level2 extends Level3
+            assertNotNull(TraceRuntime.findMethod(DeepConcreteChild.class, "deepMethod"));
+        }
+    }
+
+    @Nested
+    @DisplayName("EventEmitter 관리 테스트")
+    class EventEmitterManagementTest {
+
+        private List<TraceEvent> captured;
+
+        @BeforeEach
+        void setUp() {
+            captured = new ArrayList<>();
+            TraceRuntime.setEmitter(event -> captured.add(event));
+        }
+
+        @AfterEach
+        void restoreEmitter() {
+            TraceRuntime.setEmitter(new TcpSenderEmitter());
+        }
+
+        @Test
+        @DisplayName("setEmitter로 주입한 emitter가 emitEvent()에서 사용된다")
+        void setEmitter_usedByEmitEvent() {
+            TraceEvent event = mock(TraceEvent.class);
+            TraceRuntime.emitEvent(event);
+            assertEquals(1, captured.size());
+            assertSame(event, captured.get(0));
+        }
+
+        @Test
+        @DisplayName("TraceRuntime.emit()은 setEmitter로 주입한 emitter를 통해 이벤트를 전송한다")
+        void emit_usesInjectedEmitter() {
+            TxIdHolder.set("tx-emitter");
+            SpanIdHolder.set("span-emitter");
+            TraceRuntime.emit(TraceEventType.HTTP_OUT, TraceCategory.HTTP, "/test", 5L, true, null);
+            assertEquals(1, captured.size());
+            assertEquals("tx-emitter", captured.get(0).txId());
+        }
+    }
 }

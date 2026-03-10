@@ -2,8 +2,13 @@ package org.example.agent.plugin.http;
 
 import org.example.agent.config.AgentConfig;
 import org.example.agent.core.SpanIdHolder;
+import org.example.agent.core.TcpSenderEmitter;
 import org.example.agent.core.TraceRuntime;
 import org.example.agent.core.TxIdHolder;
+import org.example.common.TraceEvent;
+
+import java.util.ArrayList;
+import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -11,6 +16,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -64,11 +70,29 @@ class HttpPluginAdviceTest {
         void enter_secondaryDispatch_skipsOnHttpInStart() {
             try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
                 rt.when(() -> TraceRuntime.isSecondaryDispatch(any())).thenReturn(true);
+                rt.when(() -> TraceRuntime.isErrorDispatch(any())).thenReturn(false);
                 rt.when(() -> TraceRuntime.restoreContext(any())).thenAnswer(inv -> null);
 
                 Object fakeRequest = new Object();
                 HttpPlugin.DispatcherServletAdvice.enter(fakeRequest, 0L, false);
 
+                rt.verify(() -> TraceRuntime.onHttpInStart(any(), any(), any(), any(), any(), anyBoolean()), never());
+            }
+        }
+
+        @Test
+        @DisplayName("ERROR dispatch: /error 포워드는 추적하지 않아야 한다")
+        void enter_errorDispatch_isNotTracked() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                rt.when(() -> TraceRuntime.isSecondaryDispatch(any())).thenReturn(true);
+                rt.when(() -> TraceRuntime.isErrorDispatch(any())).thenReturn(true);
+
+                Object fakeRequest = new Object();
+                boolean[] isTracked = {true};
+                // enter() returns isTracked via @Advice.Local — simulate by verifying no restoreContext or onHttpInStart
+                HttpPlugin.DispatcherServletAdvice.enter(fakeRequest, 0L, false);
+
+                rt.verify(() -> TraceRuntime.restoreContext(any()), never());
                 rt.verify(() -> TraceRuntime.onHttpInStart(any(), any(), any(), any(), any(), anyBoolean()), never());
             }
         }
@@ -127,12 +151,30 @@ class HttpPluginAdviceTest {
     class RestTemplateAdviceTest {
 
         @Test
-        @DisplayName("RestTemplateAdvice4Args: 정상 종료 시 onHttpOut 호출")
+        @DisplayName("RestTemplateAdvice4Args: 정상 종료 시 onHttpOut 호출 (returnValue=null → 200)")
         void advice4Args_exit_normal_callsOnHttpOut() {
             try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
                 java.net.URI uri = java.net.URI.create("http://example.com/api");
-                HttpPlugin.RestTemplateAdvice4Args.exit(uri, fakeHttpMethod("GET"), null, 100L);
+                HttpPlugin.RestTemplateAdvice4Args.exit(uri, fakeHttpMethod("GET"), null, null, 100L);
                 rt.verify(() -> TraceRuntime.onHttpOut(eq("GET"), eq("http://example.com/api"), eq(200), anyLong()), times(1));
+            }
+        }
+
+        @Test
+        @DisplayName("RestTemplateAdvice4Args: ResponseEntity(201) → status 201 기록")
+        void advice4Args_exit_responseEntity_extractsActualStatus() {
+            List<TraceEvent> captured = new ArrayList<>();
+            TraceRuntime.setEmitter(captured::add);
+            try {
+                TxIdHolder.set("tx-rt4");
+                SpanIdHolder.set("span-rt4");
+                java.net.URI uri = java.net.URI.create("http://example.com/api");
+                HttpPlugin.RestTemplateAdvice4Args.exit(uri, fakeHttpMethod("GET"), null, new FakeResponseWithStatus(201), 100L);
+                assertEquals(1, captured.size());
+                assertEquals(201, captured.get(0).extraInfo().get("statusCode"));
+            } finally {
+                TraceRuntime.setEmitter(new TcpSenderEmitter());
+                TxIdHolder.clear(); SpanIdHolder.clear();
             }
         }
 
@@ -142,25 +184,54 @@ class HttpPluginAdviceTest {
             try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
                 java.net.URI uri = java.net.URI.create("http://example.com/api");
                 Throwable err = new RuntimeException("connection refused");
-                HttpPlugin.RestTemplateAdvice4Args.exit(uri, fakeHttpMethod("POST"), err, 100L);
+                HttpPlugin.RestTemplateAdvice4Args.exit(uri, fakeHttpMethod("POST"), err, null, 100L);
                 rt.verify(() -> TraceRuntime.onHttpOutError(eq(err), eq("POST"), eq("http://example.com/api"), anyLong()), times(1));
             }
         }
 
         @Test
-        @DisplayName("RestTemplateAdvice5Args: 정상 종료 시 onHttpOut 호출")
+        @DisplayName("RestTemplateAdvice5Args: 정상 종료 시 onHttpOut 호출 (returnValue=null → 200)")
         void advice5Args_exit_normal_callsOnHttpOut() {
             try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
                 java.net.URI uri = java.net.URI.create("http://example.com/api");
-                HttpPlugin.RestTemplateAdvice5Args.exit(uri, fakeHttpMethod("PUT"), null, 100L);
+                HttpPlugin.RestTemplateAdvice5Args.exit(uri, fakeHttpMethod("PUT"), null, null, 100L);
                 rt.verify(() -> TraceRuntime.onHttpOut(eq("PUT"), eq("http://example.com/api"), eq(200), anyLong()), times(1));
             }
         }
 
-        private enum FakeHttpMethod { GET, POST, PUT }
+        @Test
+        @DisplayName("RestTemplateAdvice5Args: ResponseEntity(204) → status 204 기록")
+        void advice5Args_exit_responseEntity_extractsActualStatus() {
+            List<TraceEvent> captured = new ArrayList<>();
+            TraceRuntime.setEmitter(captured::add);
+            try {
+                TxIdHolder.set("tx-rt5");
+                SpanIdHolder.set("span-rt5");
+                java.net.URI uri = java.net.URI.create("http://example.com/api");
+                HttpPlugin.RestTemplateAdvice5Args.exit(uri, fakeHttpMethod("DELETE"), null, new FakeResponseWithStatus(204), 100L);
+                assertEquals(1, captured.size());
+                assertEquals(204, captured.get(0).extraInfo().get("statusCode"));
+            } finally {
+                TraceRuntime.setEmitter(new TcpSenderEmitter());
+                TxIdHolder.clear(); SpanIdHolder.clear();
+            }
+        }
+
+        private enum FakeHttpMethod { GET, POST, PUT, DELETE }
 
         private FakeHttpMethod fakeHttpMethod(String name) {
             return FakeHttpMethod.valueOf(name);
+        }
+
+        static class FakeStatusCode {
+            private final int code;
+            FakeStatusCode(int code) { this.code = code; }
+            public int value() { return code; }
+        }
+        static class FakeResponseWithStatus {
+            private final int code;
+            FakeResponseWithStatus(int code) { this.code = code; }
+            public FakeStatusCode getStatusCode() { return new FakeStatusCode(code); }
         }
     }
 

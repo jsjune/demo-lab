@@ -562,4 +562,36 @@ class HttpEventHandlerTest {
         } catch (Exception ignored) {
         }
     }
+
+    // ── extractRestTemplateStatus ─────────────────────────────────────────
+
+    static class FakeStatusCode {
+        public int value() { return 201; }
+    }
+    static class FakeResponseWithStatus {
+        public FakeStatusCode getStatusCode() { return new FakeStatusCode(); }
+    }
+
+    @Nested
+    @DisplayName("extractRestTemplateStatus 테스트")
+    class ExtractRestTemplateStatusTest {
+
+        @Test
+        @DisplayName("getStatusCode().value()가 있는 객체에서 실제 status code를 반환한다")
+        void extractRestTemplateStatus_withStatusCode_returnsActual() {
+            assertEquals(201, HttpEventHandler.extractRestTemplateStatus(new FakeResponseWithStatus()));
+        }
+
+        @Test
+        @DisplayName("null이면 200을 반환한다")
+        void extractRestTemplateStatus_null_returns200() {
+            assertEquals(200, HttpEventHandler.extractRestTemplateStatus(null));
+        }
+
+        @Test
+        @DisplayName("getStatusCode()가 없는 객체이면 200을 반환한다")
+        void extractRestTemplateStatus_noStatusCode_returns200() {
+            assertEquals(200, HttpEventHandler.extractRestTemplateStatus("plain-string"));
+        }
+    }
 }

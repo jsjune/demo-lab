@@ -154,6 +154,7 @@ public class AgentConfig {
     // -----------------------------------------------------------------------
 
     public static String getHeaderKey()           { return get("header-key", "X-Tx-Id"); }
+    public static String getSpanHeaderKey()       { return get("span-header-key", "X-Span-Id"); }
     public static String getForceSampleHeader()   { return get("force-sample-header", "X-Trace-Force"); }
     public static String getServerName()     { return get("server-name", "unknown-server"); }
     public static String getCollectorHost()  { return get("collector.host", "localhost"); }

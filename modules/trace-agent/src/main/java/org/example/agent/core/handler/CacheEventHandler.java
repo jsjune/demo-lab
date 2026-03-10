@@ -24,7 +24,7 @@ public final class CacheEventHandler {
             Map<String, Object> extra = new HashMap<>();
             extra.put("key", key);
             AgentLogger.debug("[TRACE][CACHE][" + (hit ? "CACHE_HIT" : "CACHE_MISS") + "] txId=" + txId + " key=" + key);
-            TcpSender.send(TraceRuntime.createChildEvent(txId,
+            TraceRuntime.emitEvent(TraceRuntime.createChildEvent(txId,
                     hit ? TraceEventType.CACHE_HIT : TraceEventType.CACHE_MISS,
                     TraceCategory.CACHE, "redis", null, true, extra));
         });
@@ -37,7 +37,7 @@ public final class CacheEventHandler {
             Map<String, Object> extra = new HashMap<>();
             extra.put("key", key);
             AgentLogger.debug("[TRACE][CACHE][CACHE_SET] txId=" + txId + " key=" + key);
-            TcpSender.send(TraceRuntime.createChildEvent(txId, TraceEventType.CACHE_SET,
+            TraceRuntime.emitEvent(TraceRuntime.createChildEvent(txId, TraceEventType.CACHE_SET,
                     TraceCategory.CACHE, "redis", null, true, extra));
         });
     }
@@ -49,7 +49,7 @@ public final class CacheEventHandler {
             Map<String, Object> extra = new HashMap<>();
             extra.put("key", key);
             AgentLogger.debug("[TRACE][CACHE][CACHE_DEL] txId=" + txId + " key=" + key);
-            TcpSender.send(TraceRuntime.createChildEvent(txId, TraceEventType.CACHE_DEL,
+            TraceRuntime.emitEvent(TraceRuntime.createChildEvent(txId, TraceEventType.CACHE_DEL,
                     TraceCategory.CACHE, "redis", null, true, extra));
         });
     }
@@ -67,7 +67,7 @@ public final class CacheEventHandler {
                 + " op=" + extra.get("operation") + " key=" + key
                 + " errorType=" + extra.get("errorType")
                 + " errorMessage=" + extra.get("errorMessage"));
-            TcpSender.send(TraceRuntime.createChildEvent(txId, TraceEventType.CACHE_ERROR,
+            TraceRuntime.emitEvent(TraceRuntime.createChildEvent(txId, TraceEventType.CACHE_ERROR,
                 TraceCategory.CACHE, "redis", null, false, extra));
         });
     }

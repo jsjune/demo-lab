@@ -25,6 +25,7 @@ public class TraceRuntime {
     public static final String ATTR_TX_ID   = "__TRACE_TX_ID__";
     public static final String ATTR_SPAN_ID = "__TRACE_SPAN_ID__";
     private static final AtomicLong EVENT_SEQ = new AtomicLong(0);
+    private static volatile EventEmitter EMITTER = new TcpSenderEmitter();
     private static final ClassValue<java.lang.reflect.Method> GET_ATTR_CACHE = new ClassValue<java.lang.reflect.Method>() {
         @Override
         protected java.lang.reflect.Method computeValue(Class<?> type) {
@@ -38,6 +39,12 @@ public class TraceRuntime {
         }
     };
 
+    /** Test hook: replaces the active emitter. Production code uses the default {@link TcpSenderEmitter}. */
+    public static void setEmitter(EventEmitter emitter) { EMITTER = emitter; }
+
+    /** Forwards the event to the active {@link EventEmitter}. Called from handler {@code safeRun()} blocks. */
+    public static void emitEvent(TraceEvent event) { EMITTER.emit(event); }
+
     // ── Lifecycle (위임 없이 유지) ─────────────────────────────────────────
     public static boolean isSecondaryDispatch(Object request) {
         if (request == null) return false;
@@ -47,6 +54,13 @@ public class TraceRuntime {
             if (type != null) { String t = type.toString(); return "ASYNC".equals(t) || "ERROR".equals(t); }
         } catch (Throwable ignored) {}
         return false;
+    }
+
+    public static boolean isErrorDispatch(Object request) {
+        try {
+            Object type = invokeMethodSimple(request, "getDispatcherType");
+            return type != null && "ERROR".equals(type.toString());
+        } catch (Throwable ignored) { return false; }
     }
 
     public static void restoreContext(Object request) {
@@ -125,8 +139,23 @@ public class TraceRuntime {
             try { java.lang.reflect.Method m = current.getDeclaredMethod(name, parameterTypes); m.setAccessible(true); return m; }
             catch (NoSuchMethodException e) { current = current.getSuperclass(); }
         }
-        for (Class<?> iface : clazz.getInterfaces()) {
-            try { return iface.getMethod(name, parameterTypes); } catch (NoSuchMethodException ignored) {}
+        java.util.Set<Class<?>> visited = new java.util.LinkedHashSet<>();
+        current = clazz;
+        while (current != null && current != Object.class) {
+            java.lang.reflect.Method m = findInInterfaces(current.getInterfaces(), name, parameterTypes, visited);
+            if (m != null) return m;
+            current = current.getSuperclass();
+        }
+        return null;
+    }
+
+    private static java.lang.reflect.Method findInInterfaces(Class<?>[] ifaces, String name, Class<?>[] parameterTypes, java.util.Set<Class<?>> visited) {
+        for (Class<?> iface : ifaces) {
+            if (!visited.add(iface)) continue;
+            try { java.lang.reflect.Method m = iface.getDeclaredMethod(name, parameterTypes); m.setAccessible(true); return m; }
+            catch (NoSuchMethodException ignored) {}
+            java.lang.reflect.Method m = findInInterfaces(iface.getInterfaces(), name, parameterTypes, visited);
+            if (m != null) return m;
         }
         return null;
     }
@@ -165,7 +194,7 @@ public class TraceRuntime {
 
     public static void emit(TraceEventType type, TraceCategory cat, String target,
                      Long durationMs, boolean success, Map<String, Object> extra) {
-        safeRun(() -> { String txId = TxIdHolder.get(); if (txId != null) TcpSender.send(createChildEvent(txId, type, cat, target, durationMs, success, extra)); });
+        safeRun(() -> { String txId = TxIdHolder.get(); if (txId != null) emitEvent(createChildEvent(txId, type, cat, target, durationMs, success, extra)); });
     }
 
     public static void safeRun(Runnable r) { try { r.run(); } catch (Throwable t) { AgentLogger.error("Runtime error", t); } }

@@ -21,6 +21,13 @@ public final class HttpEventHandler {
 
     private HttpEventHandler() {}
 
+    // ── HTTP request attribute keys ────────────────────────────────────────
+    static final String HTTP_ATTR_START_TIME       = "__TRACE_START_TIME__";
+    static final String HTTP_ATTR_METHOD           = "__TRACE_METHOD__";
+    static final String HTTP_ATTR_PATH             = "__TRACE_PATH__";
+    static final String HTTP_ATTR_FINISHED         = "__TRACE_FINISHED__";
+    static final String HTTP_ATTR_ASYNC_REGISTERED = "__TRACE_ASYNC_REGISTERED__";
+
     // ── HTTP / WebFlux reflection caches (ClassValue => classloader-safe) ──
     private static final MethodCache HTTP_STATUS_CODE_METHOD_CACHE = new MethodCache("statusCode");
     private static final MethodCache HTTP_STATUS_VALUE_METHOD_CACHE = new MethodCache("value");
@@ -30,6 +37,9 @@ public final class HttpEventHandler {
     private static final MethodCache WF_REQ_URI_CACHE = new MethodCache("getURI");
     private static final MethodCache WF_REQ_HEADERS_CACHE = new MethodCache("getHeaders");
     private static final MethodCache WF_RESP_STATUS_CACHE = new MethodCache("getStatusCode");
+    private static final MethodCache MONO_DO_ON_SUCCESS_CACHE = new MethodCache("doOnSuccess", Consumer.class);
+    private static final MethodCache MONO_DO_ON_ERROR_CACHE = new MethodCache("doOnError", Consumer.class);
+    private static final MethodCache RESP_ENTITY_STATUS_CODE_CACHE = new MethodCache("getStatusCode");
 
     // ── HTTP Inbound ──────────────────────────────────────────────────────
 
@@ -39,10 +49,10 @@ public final class HttpEventHandler {
             long now = System.currentTimeMillis();
             if (request != null) {
                 TraceRuntime.invokeSetAttribute(request, TraceRuntime.TRACE_MARKER, Boolean.TRUE);
-                TraceRuntime.invokeSetAttribute(request, "__TRACE_START_TIME__", now);
-                TraceRuntime.invokeSetAttribute(request, "__TRACE_METHOD__", method);
-                TraceRuntime.invokeSetAttribute(request, "__TRACE_PATH__", path);
-                TraceRuntime.invokeSetAttribute(request, "__TRACE_FINISHED__", Boolean.FALSE);
+                TraceRuntime.invokeSetAttribute(request, HTTP_ATTR_START_TIME, now);
+                TraceRuntime.invokeSetAttribute(request, HTTP_ATTR_METHOD, method);
+                TraceRuntime.invokeSetAttribute(request, HTTP_ATTR_PATH, path);
+                TraceRuntime.invokeSetAttribute(request, HTTP_ATTR_FINISHED, Boolean.FALSE);
             }
 
             if (incomingTxId != null && !incomingTxId.isEmpty()) {
@@ -78,7 +88,7 @@ public final class HttpEventHandler {
                 AgentLogger.debug("[TRACE][HTTP][HTTP_IN_START] txId=" + txId
                     + " method=" + method + " path=" + path
                     + " incomingTxId=" + incomingTxId + " incomingSpanId=" + incomingSpanId);
-                TcpSender.send(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_IN_START, TraceCategory.HTTP,
+                TraceRuntime.emitEvent(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_IN_START, TraceCategory.HTTP,
                         method + " " + path, null, true, null, spanId, incomingSpanId));
             }
         });
@@ -94,7 +104,7 @@ public final class HttpEventHandler {
             AgentLogger.debug("[TRACE][HTTP][HTTP_IN_END] txId=" + txId
                 + " method=" + method + " path=" + path + " statusCode=" + statusCode
                 + " durationMs=" + durationMs + " success=" + success);
-            TcpSender.send(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
+            TraceRuntime.emitEvent(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
                     method + " " + path, durationMs, success, extra, spanId, null));
             TxIdHolder.clear(); SpanIdHolder.clear();
         });
@@ -104,8 +114,8 @@ public final class HttpEventHandler {
                              String path, long startTime, Object request,
                              String terminalType, Object asyncEvent) {
         TraceRuntime.safeRun(() -> {
-            if (request != null && Boolean.TRUE.equals(TraceRuntime.invokeGetAttribute(request, "__TRACE_FINISHED__"))) return;
-            if (request != null) TraceRuntime.invokeSetAttribute(request, "__TRACE_FINISHED__", Boolean.TRUE);
+            if (request != null && Boolean.TRUE.equals(TraceRuntime.invokeGetAttribute(request, HTTP_ATTR_FINISHED))) return;
+            if (request != null) TraceRuntime.invokeSetAttribute(request, HTTP_ATTR_FINISHED, Boolean.TRUE);
 
             long durationMs = System.currentTimeMillis() - startTime;
             AgentLogger.debug("[RUNTIME] Transaction Completed (Async): txId=" + txId + " (" + durationMs + "ms)");
@@ -134,7 +144,7 @@ public final class HttpEventHandler {
                 + " async=true terminal=" + terminalType
                 + (extra.containsKey("errorType") ? " errorType=" + extra.get("errorType") : "")
                 + (extra.containsKey("errorMessage") ? " errorMessage=" + extra.get("errorMessage") : ""));
-            TcpSender.send(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
+            TraceRuntime.emitEvent(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
                     method + " " + path, durationMs, success, extra, spanId, null));
         });
     }
@@ -173,7 +183,7 @@ public final class HttpEventHandler {
                 + " method=" + method + " path=" + path + " durationMs=" + durationMs
                 + " success=false errorType=" + extra.get("errorType")
                 + " errorMessage=" + extra.get("errorMessage"));
-            TcpSender.send(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
+            TraceRuntime.emitEvent(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
                     method + " " + path, durationMs, false, extra, spanId, null));
             TxIdHolder.clear(); SpanIdHolder.clear();
         });
@@ -182,9 +192,9 @@ public final class HttpEventHandler {
     public static void registerFromRequest(Object request) {
         if (request == null) return;
         TraceRuntime.safeRun(() -> {
-            Object method = TraceRuntime.invokeGetAttribute(request, "__TRACE_METHOD__");
-            Object path   = TraceRuntime.invokeGetAttribute(request, "__TRACE_PATH__");
-            Object startTime = TraceRuntime.invokeGetAttribute(request, "__TRACE_START_TIME__");
+            Object method = TraceRuntime.invokeGetAttribute(request, HTTP_ATTR_METHOD);
+            Object path   = TraceRuntime.invokeGetAttribute(request, HTTP_ATTR_PATH);
+            Object startTime = TraceRuntime.invokeGetAttribute(request, HTTP_ATTR_START_TIME);
             if (method != null && path != null && startTime instanceof Long) {
                 register(request, (String) method, (String) path, (Long) startTime);
             }
@@ -194,7 +204,7 @@ public final class HttpEventHandler {
     public static void register(Object request, String method, String path, long startTime) {
         TraceRuntime.safeRun(() -> {
             if (request == null) return;
-            if (Boolean.TRUE.equals(TraceRuntime.invokeGetAttribute(request, "__TRACE_ASYNC_REGISTERED__"))) return;
+            if (Boolean.TRUE.equals(TraceRuntime.invokeGetAttribute(request, HTTP_ATTR_ASYNC_REGISTERED))) return;
 
             String txId   = (String) TraceRuntime.invokeGetAttribute(request, TraceRuntime.ATTR_TX_ID);
             String spanId = (String) TraceRuntime.invokeGetAttribute(request, TraceRuntime.ATTR_SPAN_ID);
@@ -242,7 +252,7 @@ public final class HttpEventHandler {
                 Method addListener = TraceRuntime.findMethod(asyncCtx.getClass(), "addListener", finalListenerClass);
                 if (addListener != null) {
                     addListener.invoke(asyncCtx, proxy);
-                    TraceRuntime.invokeSetAttribute(request, "__TRACE_ASYNC_REGISTERED__", Boolean.TRUE);
+                    TraceRuntime.invokeSetAttribute(request, HTTP_ATTR_ASYNC_REGISTERED, Boolean.TRUE);
                     AgentLogger.debug("[RUNTIME] Registered AsyncListener for txId=" + finalTxId);
                 }
             } catch (Throwable err) {
@@ -261,7 +271,7 @@ public final class HttpEventHandler {
             AgentLogger.debug("[TRACE][HTTP][HTTP_OUT] txId=" + txId
                 + " method=" + method + " uri=" + uri + " statusCode=" + statusCode
                 + " durationMs=" + durationMs + " success=" + (statusCode >= 200 && statusCode < 400));
-            TcpSender.send(TraceRuntime.createChildEvent(txId, TraceEventType.HTTP_OUT,
+            TraceRuntime.emitEvent(TraceRuntime.createChildEvent(txId, TraceEventType.HTTP_OUT,
                     TraceCategory.HTTP, uri, durationMs, statusCode >= 200 && statusCode < 400, extra));
         });
     }
@@ -277,7 +287,7 @@ public final class HttpEventHandler {
                 + " method=" + method + " uri=" + url + " durationMs=" + durationMs
                 + " success=false errorType=" + extra.get("errorType")
                 + " errorMessage=" + extra.get("errorMessage"));
-            TcpSender.send(TraceRuntime.createChildEvent(txId, TraceEventType.HTTP_OUT,
+            TraceRuntime.emitEvent(TraceRuntime.createChildEvent(txId, TraceEventType.HTTP_OUT,
                     TraceCategory.HTTP, url, durationMs, false, extra));
         });
     }
@@ -301,9 +311,11 @@ public final class HttpEventHandler {
                 emitHttpOutWithSpan(capturedTxId, capturedSpanId, method, uri, -1, durationMs, err);
             };
 
-            Method doOnSuccess = mono.getClass().getMethod("doOnSuccess", Consumer.class);
+            Method doOnSuccess = MONO_DO_ON_SUCCESS_CACHE.get(mono.getClass());
+            if (doOnSuccess == null) return mono;
             Object m2 = doOnSuccess.invoke(mono, successConsumer);
-            Method doOnError = m2.getClass().getMethod("doOnError", Consumer.class);
+            Method doOnError = MONO_DO_ON_ERROR_CACHE.get(m2.getClass());
+            if (doOnError == null) return m2;
             return doOnError.invoke(m2, errorConsumer);
         } catch (Throwable t) { return mono; }
     }
@@ -324,7 +336,7 @@ public final class HttpEventHandler {
                 try {
                     Method getFirst = headers.getClass().getMethod("getFirst", String.class);
                     inTxId  = (String) getFirst.invoke(headers, AgentConfig.getHeaderKey());
-                    inSpanId = (String) getFirst.invoke(headers, "X-Span-Id");
+                    inSpanId = (String) getFirst.invoke(headers, AgentConfig.getSpanHeaderKey());
                 } catch (Throwable ignored) {}
             }
             onInStart(request, method, path, inTxId, inSpanId, false);
@@ -347,9 +359,11 @@ public final class HttpEventHandler {
                 emitWebFluxEnd(capturedTxId, capturedSpanId, exchange, cl, durationMs, -1, t);
             };
             Object monoWithCtx = injectReactorContext(mono, capturedTxId, capturedSpanId, cl);
-            Method doOnSuccess = monoWithCtx.getClass().getMethod("doOnSuccess", Consumer.class);
+            Method doOnSuccess = MONO_DO_ON_SUCCESS_CACHE.get(monoWithCtx.getClass());
+            if (doOnSuccess == null) return mono;
             Object m2 = doOnSuccess.invoke(monoWithCtx, successConsumer);
-            Method doOnError = m2.getClass().getMethod("doOnError", Consumer.class);
+            Method doOnError = MONO_DO_ON_ERROR_CACHE.get(m2.getClass());
+            if (doOnError == null) return m2;
             return doOnError.invoke(m2, errorConsumer);
         } catch (Throwable t) { return mono; }
     }
@@ -369,7 +383,7 @@ public final class HttpEventHandler {
                 extra.put("errorType", t.getClass().getSimpleName());
                 extra.put("errorMessage", t.getMessage() != null ? t.getMessage() : "");
             }
-            TcpSender.send(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
+            TraceRuntime.emitEvent(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
                     mp[0] + " " + mp[mp.length > 1 ? 1 : 0], durationMs, success, extra, spanId, null));
             TxIdHolder.clear(); SpanIdHolder.clear();
         });
@@ -397,7 +411,7 @@ public final class HttpEventHandler {
                 extra.put("errorType", cause.getClass().getSimpleName());
                 extra.put("errorMessage", cause.getMessage() != null ? cause.getMessage() : "");
             }
-            TcpSender.send(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP,
+            TraceRuntime.emitEvent(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP,
                     uri, durationMs, success, extra, TraceRuntime.generateSpanId(), parentSpanId));
         });
     }
@@ -449,6 +463,22 @@ public final class HttpEventHandler {
         } catch (Throwable t) { return null; }
     }
 
+    /** Extracts HTTP status code from a RestTemplate return value (e.g. ResponseEntity).
+     *  Uses cached reflection for getStatusCode() and value(). Returns 200 on failure. */
+    public static int extractRestTemplateStatus(Object response) {
+        if (response == null) return 200;
+        try {
+            Method getStatusCode = RESP_ENTITY_STATUS_CODE_CACHE.get(response.getClass());
+            if (getStatusCode == null) return 200;
+            Object statusCode = getStatusCode.invoke(response);
+            if (statusCode == null) return 200;
+            Method value = HTTP_STATUS_VALUE_METHOD_CACHE.get(statusCode.getClass());
+            if (value == null) return 200;
+            Object v = value.invoke(statusCode);
+            return v instanceof Integer ? (Integer) v : Integer.parseInt(v.toString());
+        } catch (Throwable ignored) { return 200; }
+    }
+
     private static Object resolveAndInvoke(MethodCache cache, Object target) {
         try {
             if (target == null) return null;
@@ -460,11 +490,11 @@ public final class HttpEventHandler {
     private static final class MethodCache {
         private final ClassValue<Method> cache;
 
-        private MethodCache(String methodName) {
+        private MethodCache(String methodName, Class<?>... paramTypes) {
             this.cache = new ClassValue<Method>() {
                 @Override
                 protected Method computeValue(Class<?> type) {
-                    return TraceRuntime.findMethod(type, methodName);
+                    return TraceRuntime.findMethod(type, methodName, paramTypes);
                 }
             };
         }

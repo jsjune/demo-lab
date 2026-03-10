@@ -25,7 +25,7 @@ public final class AsyncEventHandler {
         ASYNC_ERROR.remove();
         String spanId = TraceRuntime.generateSpanId();
         AgentLogger.debug("[RUNTIME] ASYNC START: " + taskName + " (txId=" + txId + ", spanId=" + spanId + ")");
-        TcpSender.send(TraceRuntime.buildEvent(txId, TraceEventType.ASYNC_START, TraceCategory.ASYNC,
+        TraceRuntime.emitEvent(TraceRuntime.buildEvent(txId, TraceEventType.ASYNC_START, TraceCategory.ASYNC,
                 taskName, null, true, null, spanId, SpanIdHolder.get()));
         SpanIdHolder.set(spanId);
         return spanId;
@@ -56,7 +56,7 @@ public final class AsyncEventHandler {
             + " success=" + success
             + (success ? "" : " errorType=" + extra.get("errorType") + " errorMessage=" + extra.get("errorMessage")));
 
-        TcpSender.send(TraceRuntime.createRootEvent(txId, TraceEventType.ASYNC_END,
+        TraceRuntime.emitEvent(TraceRuntime.createRootEvent(txId, TraceEventType.ASYNC_END,
                 TraceCategory.ASYNC, taskName, durationMs, success, extra, spanId));
     }
 }

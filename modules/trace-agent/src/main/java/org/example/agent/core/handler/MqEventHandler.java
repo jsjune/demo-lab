@@ -29,7 +29,7 @@ public final class MqEventHandler {
             extra.put("brokerType", brokerType);
             AgentLogger.debug("[TRACE][MQ][MQ_PRODUCE] txId=" + txId
                 + " brokerType=" + brokerType + " topic=" + topic + " key=" + key);
-            TcpSender.send(TraceRuntime.createChildEvent(txId, TraceEventType.MQ_PRODUCE,
+            TraceRuntime.emitEvent(TraceRuntime.createChildEvent(txId, TraceEventType.MQ_PRODUCE,
                     TraceCategory.MQ, topic, null, true, extra));
         });
     }
@@ -52,7 +52,7 @@ public final class MqEventHandler {
             AgentLogger.debug("[TRACE][MQ][MQ_CONSUME_START] txId=" + txId
                 + " brokerType=" + brokerType + " topic=" + topic + " incomingTxId=" + incomingTxId
                 + " spanId=" + spanId);
-            TcpSender.send(TraceRuntime.createRootEvent(txId, TraceEventType.MQ_CONSUME_START,
+            TraceRuntime.emitEvent(TraceRuntime.createRootEvent(txId, TraceEventType.MQ_CONSUME_START,
                     TraceCategory.MQ, topic, null, true, null, spanId));
         });
     }
@@ -67,7 +67,7 @@ public final class MqEventHandler {
             AgentLogger.debug("[TRACE][MQ][MQ_CONSUME_END] txId=" + txId
                 + " brokerType=" + brokerType + " topic=" + resolvedTopic + " durationMs=" + resolvedDuration
                 + " success=true");
-            TcpSender.send(TraceRuntime.createRootEvent(txId, TraceEventType.MQ_CONSUME_END,
+            TraceRuntime.emitEvent(TraceRuntime.createRootEvent(txId, TraceEventType.MQ_CONSUME_END,
                     TraceCategory.MQ, resolvedTopic, resolvedDuration, true, null, SpanIdHolder.get()));
             clearConsumeContext();
         });
@@ -109,7 +109,7 @@ public final class MqEventHandler {
                 + " brokerType=" + brokerType + " topic=" + resolvedTopic + " durationMs=" + resolvedDuration
                 + " success=false errorType=" + extra.get("errorType")
                 + " errorMessage=" + extra.get("errorMessage"));
-            TcpSender.send(TraceRuntime.createRootEvent(txId, TraceEventType.MQ_CONSUME_END,
+            TraceRuntime.emitEvent(TraceRuntime.createRootEvent(txId, TraceEventType.MQ_CONSUME_END,
                     TraceCategory.MQ, resolvedTopic, resolvedDuration, false, extra, SpanIdHolder.get()));
             clearConsumeContext();
         });

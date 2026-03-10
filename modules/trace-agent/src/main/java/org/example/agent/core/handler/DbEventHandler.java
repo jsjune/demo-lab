@@ -66,7 +66,7 @@ public final class DbEventHandler {
                 extra.put("sql", finalSql);
                 AgentLogger.debug("[TRACE][DB][DB_QUERY] txId=" + txId
                     + " dbHost=" + finalHost + " durationMs=" + finalDurationMs + " success=true");
-                TcpSender.send(TraceRuntime.createChildEvent(txId, TraceEventType.DB_QUERY,
+                TraceRuntime.emitEvent(TraceRuntime.createChildEvent(txId, TraceEventType.DB_QUERY,
                         TraceCategory.DB, finalHost, finalDurationMs, true, extra));
                 DB_EVENT_EMITTED.set(true);
             } finally {
@@ -161,7 +161,7 @@ public final class DbEventHandler {
             + " errorType=" + extra.get("errorType")
             + " errorMessage=" + extra.get("errorMessage")
             + " chainSummary=" + extra.get("chainSummary"));
-        TcpSender.send(TraceRuntime.createChildEvent(txId, TraceEventType.DB_QUERY,
+        TraceRuntime.emitEvent(TraceRuntime.createChildEvent(txId, TraceEventType.DB_QUERY,
                 TraceCategory.DB, resolveDbHost(dbHost), resolveDuration(durationMs), false, extra));
         DB_EVENT_EMITTED.set(true);
         DB_FAILURE_LATCHED.set(true);

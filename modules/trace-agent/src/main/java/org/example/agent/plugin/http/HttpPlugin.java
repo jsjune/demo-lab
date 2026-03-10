@@ -107,6 +107,10 @@ public class HttpPlugin implements TracerPlugin {
             isTracked = true;
 
             if (TraceRuntime.isSecondaryDispatch(request)) {
+                if (TraceRuntime.isErrorDispatch(request)) {
+                    isTracked = false;
+                    return;
+                }
                 TraceRuntime.restoreContext(request);
                 isTracked = TxIdHolder.get() != null;
                 return;
@@ -120,7 +124,7 @@ public class HttpPlugin implements TracerPlugin {
                 HttpPlugin.getRequestMethod(request),
                 HttpPlugin.getRequestURI(request),
                 HttpPlugin.getRequestHeader(request, AgentConfig.getHeaderKey()),
-                HttpPlugin.getRequestHeader(request, "X-Span-Id"),
+                HttpPlugin.getRequestHeader(request, AgentConfig.getSpanHeaderKey()),
                 forceTrace
             );
         }
@@ -206,6 +210,7 @@ public class HttpPlugin implements TracerPlugin {
             @Advice.Argument(0) java.net.URI uri,
             @Advice.Argument(1) Object httpMethod,
             @Advice.Thrown Throwable thrown,
+            @Advice.Return Object returnValue,
             @Advice.Local("startTime") long startTime
         ) {
             long durationMs = System.currentTimeMillis() - startTime;
@@ -214,7 +219,8 @@ public class HttpPlugin implements TracerPlugin {
             if (thrown != null) {
                 TraceRuntime.onHttpOutError(thrown, method, uri.toString(), durationMs);
             } else {
-                TraceRuntime.onHttpOut(method, uri.toString(), 200, durationMs);
+                TraceRuntime.onHttpOut(method, uri.toString(),
+                    org.example.agent.core.handler.HttpEventHandler.extractRestTemplateStatus(returnValue), durationMs);
             }
         }
     }
@@ -236,6 +242,7 @@ public class HttpPlugin implements TracerPlugin {
             @Advice.Argument(0) java.net.URI uri,
             @Advice.Argument(2) Object httpMethod,
             @Advice.Thrown Throwable thrown,
+            @Advice.Return Object returnValue,
             @Advice.Local("startTime") long startTime
         ) {
             long durationMs = System.currentTimeMillis() - startTime;
@@ -244,7 +251,8 @@ public class HttpPlugin implements TracerPlugin {
             if (thrown != null) {
                 TraceRuntime.onHttpOutError(thrown, method, uri.toString(), durationMs);
             } else {
-                TraceRuntime.onHttpOut(method, uri.toString(), 200, durationMs);
+                TraceRuntime.onHttpOut(method, uri.toString(),
+                    org.example.agent.core.handler.HttpEventHandler.extractRestTemplateStatus(returnValue), durationMs);
             }
         }
     }
@@ -348,27 +356,11 @@ public class HttpPlugin implements TracerPlugin {
 
     public static void injectHeadersToRequest(Object request, String txId, String spanId) {
         if (txId == null || request == null) return;
-        try {
-            // ClientHttpRequest.getHeaders()
-            java.lang.reflect.Method getHeadersMethod = request.getClass().getMethod("getHeaders");
-            Object headers = getHeadersMethod.invoke(request);
-            if (headers == null) return;
-
-            // HttpHeaders.add(String, String)
-            java.lang.reflect.Method addMethod = headers.getClass().getMethod("add", String.class, String.class);
-            addMethod.invoke(headers, AgentConfig.getHeaderKey(), txId);
-            if (spanId != null) {
-                addMethod.invoke(headers, "X-Span-Id", spanId);
-            }
+        ReflectionUtils.invokeMethod(request, "getHeaders").ifPresent(headers -> {
+            ReflectionUtils.invokeMethod(headers, "add", AgentConfig.getHeaderKey(), txId);
+            if (spanId != null) ReflectionUtils.invokeMethod(headers, "add", AgentConfig.getSpanHeaderKey(), spanId);
             AgentLogger.debug("[HTTP-OUT] Injected headers: " + AgentConfig.getHeaderKey() + "=" + txId);
-        } catch (Throwable t) {
-            AgentLogger.debug("[HTTP-OUT] Failed to inject headers via reflection: " + t.getMessage());
-            // Fallback to ReflectionUtils
-            ReflectionUtils.invokeMethod(request, "getHeaders").ifPresent(headers -> {
-                ReflectionUtils.invokeMethod(headers, "add", AgentConfig.getHeaderKey(), txId);
-                if (spanId != null) ReflectionUtils.invokeMethod(headers, "add", "X-Span-Id", spanId);
-            });
-        }
+        });
     }
 
     public static Object rebuildClientRequestWithHeaders(Object request, String txId, String spanId) {
@@ -386,7 +378,7 @@ public class HttpPlugin implements TracerPlugin {
                 builderClass.getMethod("header", String.class, String[].class);
             headerMethod.invoke(builderObj, AgentConfig.getHeaderKey(), new String[]{txId});
             if (spanId != null) {
-                headerMethod.invoke(builderObj, "X-Span-Id", new String[]{spanId});
+                headerMethod.invoke(builderObj, AgentConfig.getSpanHeaderKey(), new String[]{spanId});
             }
             return builderClass.getMethod("build").invoke(builderObj);
         } catch (Throwable t) {

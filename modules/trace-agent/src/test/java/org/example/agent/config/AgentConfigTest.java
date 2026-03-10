@@ -234,6 +234,27 @@ class AgentConfigTest {
     }
 
     @Test
+    @DisplayName("span-header-key 미설정 시 기본값 'X-Span-Id'를 반환해야 한다")
+    void getSpanHeaderKey_defaultIsXSpanId() {
+        assertEquals("X-Span-Id", AgentConfig.getSpanHeaderKey());
+    }
+
+    @Test
+    @DisplayName("span-header-key 프로퍼티 설정 시 해당 값을 반환해야 한다")
+    void getSpanHeaderKey_customProperty_returnsConfiguredValue() throws Exception {
+        setProperty("span-header-key", "X-My-Span");
+        assertEquals("X-My-Span", AgentConfig.getSpanHeaderKey());
+    }
+
+    @Test
+    @DisplayName("시스템 프로퍼티 trace.agent.span-header-key가 init() 후 span 헤더 키를 override해야 한다")
+    void getSpanHeaderKey_systemProperty_overridesAfterInit() {
+        stateGuard.setSystemProperty("trace.agent.span-header-key", "X-Sys-Span");
+        AgentConfig.init();
+        assertEquals("X-Sys-Span", AgentConfig.getSpanHeaderKey());
+    }
+
+    @Test
     @DisplayName("기타 공통 설정 getter들이 커스텀 값/기본값을 반환해야 한다")
     void commonGetters_coverCustomAndDefault() throws Exception {
         setProperty("header-key", "X-Custom-Tx");
