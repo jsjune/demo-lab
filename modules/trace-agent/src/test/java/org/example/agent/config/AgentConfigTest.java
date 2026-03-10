@@ -46,6 +46,34 @@ class AgentConfigTest {
     }
 
     @Test
+    @DisplayName("sampling.rate가 1.0 초과 값이면 기본값 1.0을 반환해야 한다")
+    void getSamplingRate_aboveOne_returnsDefault() throws Exception {
+        setProperty("sampling.rate", "1.5");
+        assertEquals(1.0, AgentConfig.getSamplingRate());
+    }
+
+    @Test
+    @DisplayName("sampling.rate가 0.0 미만 값이면 기본값 1.0을 반환해야 한다")
+    void getSamplingRate_belowZero_returnsDefault() throws Exception {
+        setProperty("sampling.rate", "-0.1");
+        assertEquals(1.0, AgentConfig.getSamplingRate());
+    }
+
+    @Test
+    @DisplayName("sampling.rate에 숫자가 아닌 문자열을 설정하면 기본값 1.0을 반환해야 한다")
+    void getSamplingRate_nonNumericString_returnsDefault() throws Exception {
+        setProperty("sampling.rate", "abc");
+        assertEquals(1.0, AgentConfig.getSamplingRate());
+    }
+
+    @Test
+    @DisplayName("sampling.rate = \"NaN\" 설정 시 기본값 1.0을 반환해야 한다")
+    void getSamplingRate_nanString_returnsDefault() throws Exception {
+        setProperty("sampling.rate", "NaN");
+        assertEquals(1.0, AgentConfig.getSamplingRate());
+    }
+
+    @Test
     @DisplayName("플러그인 활성화 상태가 설정 파일과 일치해야 한다")
     void testPluginStatus() {
         assertTrue(AgentConfig.isPluginEnabled("http"));

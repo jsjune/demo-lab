@@ -1,5 +1,7 @@
 package org.example.agent.config;
 
+import org.example.agent.core.util.AgentLogger;
+
 import java.io.FileInputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -63,6 +65,19 @@ public class AgentConfig {
         String explicitVersion = props.getProperty("spring.version");
         if (explicitVersion != null && !explicitVersion.trim().isEmpty()) {
             resolvedProfile = SpringVersionProfile.fromConfig(explicitVersion);
+        }
+
+        // 4) Validate sampling.rate once at startup to avoid repeated warning on hot path.
+        String samplingRateVal = props.getProperty("sampling.rate");
+        if (samplingRateVal != null) {
+            try {
+                double rate = Double.parseDouble(samplingRateVal);
+                if (Double.isNaN(rate) || rate < 0.0 || rate > 1.0) {
+                    AgentLogger.warn("[TRACE AGENT] Invalid sampling.rate '" + samplingRateVal + "', using default 1.0");
+                }
+            } catch (NumberFormatException e) {
+                AgentLogger.warn("[TRACE AGENT] Invalid sampling.rate '" + samplingRateVal + "', using default 1.0");
+            }
         }
     }
 
@@ -161,7 +176,13 @@ public class AgentConfig {
     public static int    getCollectorPort()  { return getInt("collector.port", 9200); }
 
     public static double getSamplingRate() {
-        try { return Double.parseDouble(get("sampling.rate", "1.0")); } catch (Exception e) { return 1.0; }
+        try {
+            double rate = Double.parseDouble(get("sampling.rate", "1.0"));
+            if (Double.isNaN(rate) || rate < 0.0 || rate > 1.0) {
+                return 1.0;
+            }
+            return rate;
+        } catch (Exception e) { return 1.0; }
     }
 
     public static String getSamplingStrategy() { return get("sampling.strategy", "rate"); }

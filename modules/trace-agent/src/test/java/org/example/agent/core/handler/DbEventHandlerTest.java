@@ -39,7 +39,7 @@ class DbEventHandlerTest {
         });
         TxIdHolder.clear();
         SpanIdHolder.clear();
-        DbEventHandler.resetDepthForTest();
+        DbEventHandler.resetForTest();
     }
 
     @AfterEach
@@ -47,7 +47,7 @@ class DbEventHandlerTest {
         tcpMock.close();
         TxIdHolder.clear();
         SpanIdHolder.clear();
-        DbEventHandler.resetDepthForTest();
+        DbEventHandler.resetForTest();
     }
 
     @Test
