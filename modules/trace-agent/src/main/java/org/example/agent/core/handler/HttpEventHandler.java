@@ -46,12 +46,22 @@ public final class HttpEventHandler {
             }
 
             if (incomingTxId != null && !incomingTxId.isEmpty()) {
+                TxIdHolder.clear();
                 TxIdHolder.set(incomingTxId);
-                AgentLogger.debug("[RUNTIME] Adopted incoming txId: " + incomingTxId);
-            } else if (TxIdHolder.get() == null) {
-                if (!forceTrace && !TxIdGenerator.shouldSample()) return;
-                TxIdHolder.set(TxIdGenerator.generate());
-                AgentLogger.debug("[RUNTIME] Generated new txId: " + TxIdHolder.get());
+                AgentLogger.info("[HTTP-IN] Adopted incoming txId: " + incomingTxId + " for path: " + path);
+            } else {
+                String existing = TxIdHolder.get();
+                if (existing == null) {
+                    if (!forceTrace && !TxIdGenerator.shouldSample()) {
+                        AgentLogger.debug("[HTTP-IN] Not sampling path: " + path);
+                        return;
+                    }
+                    String newTxId = TxIdGenerator.generate();
+                    TxIdHolder.set(newTxId);
+                    AgentLogger.info("[HTTP-IN] Generated new txId: " + newTxId + " for path: " + path);
+                } else {
+                    AgentLogger.debug("[HTTP-IN] Using existing ThreadLocal txId: " + existing + " for path: " + path);
+                }
             }
 
             String txId = TxIdHolder.get();

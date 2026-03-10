@@ -29,3 +29,12 @@ dependencies {
 tasks.named('test') {
     useJUnitPlatform()
 }
+
+bootRun {
+    jvmArgs "-javaagent:${project.rootDir}/modules/trace-agent/build/libs/trace-agent-0.0.1-SNAPSHOT.jar",
+            "-Dtrace.agent.server-name=sample-webflux",
+            "-Dtrace.agent.collector.host=localhost",
+            "-Dtrace.agent.collector.port=9200",
+            "-Dtrace.agent.sampling.rate=1.0",
+            "-Dserver.port=8002"
+}

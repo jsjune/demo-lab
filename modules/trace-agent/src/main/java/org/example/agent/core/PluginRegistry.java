@@ -1,8 +1,8 @@
 package org.example.agent.core;
 
+import net.bytebuddy.agent.builder.AgentBuilder;
 import org.example.agent.TracerPlugin;
 
-import java.lang.instrument.ClassFileTransformer;
 import java.util.*;
 
 public class PluginRegistry {
@@ -12,9 +12,6 @@ public class PluginRegistry {
         if (!activePlugins.isEmpty()) return;
         ServiceLoader<TracerPlugin> loader = ServiceLoader.load(TracerPlugin.class);
         for (TracerPlugin plugin : loader) {
-            // InstrumentationContext is null: the current SPI contract does not require
-            // a context object — all configuration is read via AgentConfig directly.
-            // SPI implementations must tolerate null (documented in TracerPlugin interface).
             if (plugin.isEnabled(null)) {
                 try {
                     plugin.init(null);
@@ -30,25 +27,20 @@ public class PluginRegistry {
         activePlugins.sort(Comparator.comparingInt(TracerPlugin::order));
     }
 
+    /**
+     * Chain all active plugin installations into the AgentBuilder and return the result.
+     * Called once during agent initialization.
+     */
+    public static AgentBuilder install(AgentBuilder builder) {
+        for (TracerPlugin plugin : activePlugins) {
+            builder = plugin.install(builder);
+        }
+        return builder;
+    }
+
     /** True if any active plugin requires Bootstrap ClassLoader registration. */
     public static boolean requiresAnyBootstrapSearch() {
         return activePlugins.stream().anyMatch(TracerPlugin::requiresBootstrapSearch);
-    }
-
-    public static List<ClassFileTransformer> activeTransformers() {
-        List<ClassFileTransformer> transformers = new ArrayList<>();
-        for (TracerPlugin plugin : activePlugins) {
-            transformers.addAll(plugin.transformers());
-        }
-        return transformers;
-    }
-
-    public static List<String> targetPrefixes() {
-        List<String> prefixes = new ArrayList<>();
-        for (TracerPlugin plugin : activePlugins) {
-            prefixes.addAll(plugin.targetClassPrefixes());
-        }
-        return prefixes;
     }
 
     public static List<String> activePluginIds() {

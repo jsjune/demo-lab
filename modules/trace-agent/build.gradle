@@ -4,16 +4,38 @@ plugins {
     id 'com.gradleup.shadow' version '9.0.0'
 }
 
+// Custom configuration for shadow jar only.
+// byte-buddy-dep must be in the shadow jar but must NOT appear on the test
+// classpath — having both byte-buddy-dep and Mockito's transitive byte-buddy
+// on the same classpath causes AbstractMethodError (version mismatch).
+configurations {
+    shadowOnly
+}
+
 dependencies {
     implementation project(':modules:trace-common')
-    implementation 'org.ow2.asm:asm:9.6'
-    implementation 'org.ow2.asm:asm-commons:9.6'
+
+    // byte-buddy-dep: fat jar with ASM bundled as net.bytebuddy.jar.asm.*
+    // Declared compileOnly so it is available for main-source compilation but
+    // does NOT end up on the test runtime classpath.
+    compileOnly 'net.bytebuddy:byte-buddy-dep:1.14.19'
+
+    // Same dep in shadowOnly so the shadow jar task can include it.
+    shadowOnly 'net.bytebuddy:byte-buddy-dep:1.14.19'
+
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.15.2'
 
+    // ASM — test only (needed for JdbcPluginTransformerCoverageTest helper)
+    testImplementation 'org.ow2.asm:asm:9.6'
+    testImplementation 'org.ow2.asm:asm-commons:9.6'
     testImplementation platform('org.junit:junit-bom:5.9.1')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testImplementation 'org.mockito:mockito-core:5.12.0'
-    testImplementation 'org.mockito:mockito-inline:5.2.0' // Keeping this just in case, but core 5+ should suffice
+    testImplementation 'org.mockito:mockito-inline:5.2.0'
+    // byte-buddy for tests: uses the version Mockito is compiled against (1.14.13)
+    // to avoid AbstractMethodError. The shadow jar uses the dep version above.
+    testImplementation 'net.bytebuddy:byte-buddy:1.14.19'
+    testImplementation 'net.bytebuddy:byte-buddy-agent:1.14.19'
     testImplementation 'org.springframework.kafka:spring-kafka:3.1.2'
     testImplementation 'org.apache.kafka:kafka-clients:3.6.1'
     testImplementation 'org.springframework:spring-test:6.1.1'
@@ -39,11 +61,12 @@ jacocoTestReport {
 
 shadowJar {
     archiveClassifier.set('')
-    
-    // ASM relocate: Mandatory for instrumenting JDK core classes (e.g. ThreadPoolExecutor).
-    // Without relocation, ASM classes like ClassWriter/SymbolTable will be split 
-    // between Bootstrap and App ClassLoaders, causing IllegalAccessError.
-    relocate 'org.objectweb.asm', 'org.example.agent.shaded.asm'
+
+    // Include byte-buddy-dep (shadowOnly) + runtime deps in shadow jar
+    configurations = [project.configurations.shadowOnly, project.configurations.runtimeClasspath]
+
+    // ByteBuddy 전체 relocate (내장 ASM net.bytebuddy.jar.asm 포함)
+    relocate 'net.bytebuddy', 'org.example.agent.shaded.bytebuddy'
     relocate 'com.fasterxml.jackson', 'org.example.agent.shaded.jackson'
     relocate 'org.example.common', 'org.example.agent.shaded.common'
 

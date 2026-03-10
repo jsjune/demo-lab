@@ -5,10 +5,10 @@ import org.example.agent.plugin.executor.ExecutorPlugin;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 
-import java.lang.instrument.ClassFileTransformer;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 
+import static net.bytebuddy.matcher.ElementMatchers.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.times;
@@ -17,16 +17,16 @@ class ExecutorAsyncErrorInstrumentationTest extends ByteBuddyIntegrationTest {
 
     @Test
     void asyncExecutionAspectHandleError_shouldCallTraceRuntimeOnAsyncError() throws Exception {
-        ExecutorPlugin plugin = new ExecutorPlugin();
-        ClassFileTransformer transformer = plugin.transformers().get(1);
-
-        Class<?> transformed = transformAndLoad(
+        Class<?> transformed = instrument(
             org.springframework.aop.interceptor.AsyncExecutionAspectSupport.class,
-            transformer);
+            ExecutorPlugin.AsyncErrorAdvice.class,
+            named("handleError").and(takesArgument(0, Throwable.class)));
+
         Constructor<?> ctor = transformed.getDeclaredConstructors()[0];
         ctor.setAccessible(true);
         Object[] args = new Object[ctor.getParameterCount()];
         Object instance = ctor.newInstance(args);
+
         Method handleError = transformed.getDeclaredMethod(
             "handleError", Throwable.class, Method.class, Object[].class);
         handleError.setAccessible(true);

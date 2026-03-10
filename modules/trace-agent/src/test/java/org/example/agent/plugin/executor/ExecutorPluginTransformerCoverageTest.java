@@ -1,79 +1,63 @@
 package org.example.agent.plugin.executor;
 
-import org.example.agent.testutil.AsmTestUtils;
+import org.example.agent.core.ContextCapturingRunnable;
+import org.example.agent.core.TraceRuntime;
+import org.example.agent.instrumentation.ByteBuddyIntegrationTest;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
-import org.objectweb.asm.MethodVisitor;
-import org.objectweb.asm.Opcodes;
+import org.mockito.MockedStatic;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+
+import static net.bytebuddy.matcher.ElementMatchers.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.*;
 
-class ExecutorPluginTransformerCoverageTest {
+class ExecutorPluginTransformerCoverageTest extends ByteBuddyIntegrationTest {
 
     @Test
-    void executorTransformer_transformsThreadPoolExecute() throws Exception {
-        byte[] original = AsmTestUtils.classWithMethods(
-            "java/util/concurrent/ThreadPoolExecutor",
-            AsmTestUtils.MethodSpec.of("execute", "(Ljava/lang/Runnable;)V"));
-
-        ExecutorPlugin.ExecutorTransformer t = new ExecutorPlugin.ExecutorTransformer();
-        byte[] out = t.transform(getClass().getClassLoader(), "java/util/concurrent/ThreadPoolExecutor",
-            null, null, original);
-
-        assertNotNull(out);
+    void pluginMetadata() {
+        ExecutorPlugin p = new ExecutorPlugin();
+        assertEquals("executor", p.pluginId());
+        assertTrue(p.requiresBootstrapSearch());
     }
 
     @Test
-    void executorTransformer_transformsForkJoinExternalRunnable() throws Exception {
-        byte[] original = AsmTestUtils.classWithMethods(
-            "java/util/concurrent/ForkJoinPool",
-            AsmTestUtils.MethodSpec.of("externalSubmit", "(Ljava/lang/Runnable;)V"));
+    void runnableWrappingAdvice_wrapsRunnableBeforeMethodBody() throws Exception {
+        Class<?> cls = instrument(
+            DummyExecutor.class,
+            ExecutorPlugin.RunnableWrappingAdvice.class,
+            named("execute").and(takesArgument(0, Runnable.class)));
 
-        ExecutorPlugin.ExecutorTransformer t = new ExecutorPlugin.ExecutorTransformer();
-        byte[] out = t.transform(getClass().getClassLoader(), "java/util/concurrent/ForkJoinPool",
-            null, null, original);
+        Object instance = cls.getDeclaredConstructor().newInstance();
+        Method execute = cls.getDeclaredMethod("execute", Runnable.class);
 
-        assertNotNull(out);
+        Runnable original = () -> {};
+        execute.invoke(instance, original);
+
+        Field captured = cls.getDeclaredField("captured");
+        captured.setAccessible(true);
+        Object capturedRunnable = captured.get(instance);
+
+        assertInstanceOf(ContextCapturingRunnable.class, capturedRunnable);
     }
 
     @Test
-    void executorTransformer_nonTarget_returnsNull() throws Exception {
-        byte[] original = AsmTestUtils.classWithMethods("com/example/NoExecutor");
-        ExecutorPlugin.ExecutorTransformer t = new ExecutorPlugin.ExecutorTransformer();
-        assertNull(t.transform(getClass().getClassLoader(), "com/example/NoExecutor", null, null, original));
+    void asyncErrorAdvice_callsOnAsyncError() {
+        try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+            Throwable err = new RuntimeException("async fail");
+            ExecutorPlugin.AsyncErrorAdvice.enter(err);
+            rt.verify(() -> TraceRuntime.onAsyncError(eq(err)), times(1));
+        }
     }
 
-    @Test
-    void asyncExecutionAspectTransformer_transformsHandleError() throws Exception {
-        byte[] original = AsmTestUtils.classWithMethods(
-            "org/springframework/aop/interceptor/AsyncExecutionAspectSupport",
-            AsmTestUtils.MethodSpec.of("handleError",
-                "(Ljava/lang/Throwable;Ljava/lang/reflect/Method;[Ljava/lang/Object;)V"));
+    // -----------------------------------------------------------------------
+    // Helper stubs
+    // -----------------------------------------------------------------------
 
-        ExecutorPlugin.AsyncExecutionAspectTransformer t = new ExecutorPlugin.AsyncExecutionAspectTransformer();
-        byte[] out = t.transform(getClass().getClassLoader(),
-            "org/springframework/aop/interceptor/AsyncExecutionAspectSupport", null, null, original);
-
-        assertNotNull(out);
-    }
-
-    @Test
-    void runnableWrappingAdvice_onMethodEnter_wrapsRunnable() {
-        MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-        ExecutorPlugin.RunnableWrappingAdvice advice = new ExecutorPlugin.RunnableWrappingAdvice(
-            mv, Opcodes.ACC_PUBLIC, "execute", "(Ljava/lang/Runnable;)V");
-
-        advice.onMethodEnter();
-
-        verify(mv, atLeastOnce()).visitMethodInsn(
-            eq(Opcodes.INVOKESPECIAL),
-            eq("org/example/agent/core/ContextCapturingRunnable"),
-            eq("<init>"),
-            eq("(Ljava/lang/Runnable;)V"),
-            eq(false)
-        );
+    public static class DummyExecutor {
+        public Runnable captured;
+        public void execute(Runnable r) { this.captured = r; }
     }
 }

@@ -1,96 +1,119 @@
 package org.example.agent.plugin.http;
 
-import org.example.agent.testutil.AsmTestUtils;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
-import org.objectweb.asm.MethodVisitor;
-import org.objectweb.asm.Opcodes;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.verify;
 
 class HttpPluginTransformerCoverageTest {
 
     @Test
-    void dispatcherHandlerTransformer_transformsMatchingClass() throws Exception {
-        byte[] original = AsmTestUtils.classWithMethods(
-            "org/springframework/web/reactive/DispatcherHandler",
-            AsmTestUtils.MethodSpec.of("handle",
-                "(Lorg/springframework/web/server/ServerWebExchange;)Lreactor/core/publisher/Mono;"));
+    void pluginMetadata() {
+        HttpPlugin p = new HttpPlugin();
+        assertEquals("http", p.pluginId());
+        assertTrue(p.requiresBootstrapSearch());
+    }
 
-        HttpPlugin.DispatcherHandlerTransformer t = new HttpPlugin.DispatcherHandlerTransformer();
-        byte[] out = t.transform(getClass().getClassLoader(),
-            "org/springframework/web/reactive/DispatcherHandler", null, null, original);
+    // -----------------------------------------------------------------------
+    // getRequestMethod
+    // -----------------------------------------------------------------------
 
-        assertNotNull(out);
+    @Test
+    void getRequestMethod_null_returnsUnknown() {
+        assertEquals("UNKNOWN", HttpPlugin.getRequestMethod(null));
     }
 
     @Test
-    void webClientTransformer_transformsMatchingClass() throws Exception {
-        byte[] original = AsmTestUtils.classWithMethods(
-            "org/springframework/web/reactive/function/client/ExchangeFunctions$DefaultExchangeFunction",
-            AsmTestUtils.MethodSpec.of("exchange",
-                "(Lorg/springframework/web/reactive/function/client/ClientRequest;)Lreactor/core/publisher/Mono;"));
+    void getRequestMethod_reflectsGetMethod() {
+        assertEquals("POST", HttpPlugin.getRequestMethod(new FakeRequest()));
+    }
 
-        HttpPlugin.WebClientTransformer t = new HttpPlugin.WebClientTransformer();
-        byte[] out = t.transform(getClass().getClassLoader(),
-            "org/springframework/web/reactive/function/client/ExchangeFunctions$DefaultExchangeFunction",
-            null, null, original);
+    // -----------------------------------------------------------------------
+    // getRequestURI
+    // -----------------------------------------------------------------------
 
-        assertNotNull(out);
+    @Test
+    void getRequestURI_null_returnsSlashUnknown() {
+        assertEquals("/unknown", HttpPlugin.getRequestURI(null));
     }
 
     @Test
-    void restTemplateTransformer_transformsDoExecuteAndCreateRequest() throws Exception {
-        byte[] original = AsmTestUtils.classWithMethods(
-            "org/springframework/web/client/RestTemplate",
-            AsmTestUtils.MethodSpec.of("doExecute",
-                "(Ljava/net/URI;Lorg/springframework/http/HttpMethod;Lorg/springframework/web/client/RequestCallback;Lorg/springframework/web/client/ResponseExtractor;)Ljava/lang/Object;"),
-            AsmTestUtils.MethodSpec.of("createRequest",
-                "(Ljava/net/URI;Lorg/springframework/http/HttpMethod;)Lorg/springframework/http/client/ClientHttpRequest;"));
+    void getRequestURI_reflectsGetRequestURI() {
+        assertEquals("/api/items", HttpPlugin.getRequestURI(new FakeRequest()));
+    }
 
-        HttpPlugin.RestTemplateTransformer t = new HttpPlugin.RestTemplateTransformer();
-        byte[] out = t.transform(getClass().getClassLoader(), "org/springframework/web/client/RestTemplate",
-            null, null, original);
+    // -----------------------------------------------------------------------
+    // getRequestHeader
+    // -----------------------------------------------------------------------
 
-        assertNotNull(out);
+    @Test
+    void getRequestHeader_nullRequest_returnsNull() {
+        assertNull(HttpPlugin.getRequestHeader(null, "X-Tx-Id"));
     }
 
     @Test
-    void httpServletRequestTransformer_transformsStartAsync() throws Exception {
-        byte[] original = AsmTestUtils.classWithMethods(
-            "com/example/MyRequest",
-            AsmTestUtils.MethodSpec.of("startAsync", "()Ljava/lang/Object;"));
-
-        HttpPlugin.HttpServletRequestTransformer t = new HttpPlugin.HttpServletRequestTransformer();
-        byte[] out = t.transform(getClass().getClassLoader(), "com/example/MyRequest", null, null, original);
-
-        assertNotNull(out);
+    void getRequestHeader_nullName_returnsNull() {
+        assertNull(HttpPlugin.getRequestHeader(new FakeRequest(), null));
     }
 
     @Test
-    void dispatcherHandlerTransformer_nonMatching_returnsNull() throws Exception {
-        byte[] original = AsmTestUtils.classWithMethods("com/example/Nope");
-        HttpPlugin.DispatcherHandlerTransformer t = new HttpPlugin.DispatcherHandlerTransformer();
-        assertNull(t.transform(getClass().getClassLoader(), "com/example/Nope", null, null, original));
+    void getRequestHeader_reflectsGetHeader() {
+        assertEquals("hdr-X-Tx-Id", HttpPlugin.getRequestHeader(new FakeRequest(), "X-Tx-Id"));
+    }
+
+    // -----------------------------------------------------------------------
+    // getResponseStatus
+    // -----------------------------------------------------------------------
+
+    @Test
+    void getResponseStatus_null_returns200() {
+        assertEquals(200, HttpPlugin.getResponseStatus(null));
     }
 
     @Test
-    void startAsyncAdvice_onMethodExit_callsRegister() {
-        MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-        HttpPlugin.StartAsyncAdvice advice = new HttpPlugin.StartAsyncAdvice(
-            mv, Opcodes.ACC_PUBLIC, "startAsync", "()Ljava/lang/Object;");
+    void getResponseStatus_reflectsGetStatus() {
+        assertEquals(404, HttpPlugin.getResponseStatus(new FakeResponse()));
+    }
 
-        advice.onMethodExit(Opcodes.ARETURN);
+    // -----------------------------------------------------------------------
+    // isAsyncStarted
+    // -----------------------------------------------------------------------
 
-        verify(mv, atLeastOnce()).visitMethodInsn(
-            eq(Opcodes.INVOKESTATIC),
-            eq("org/example/agent/core/TraceRuntime"),
-            eq("registerAsyncListenerFromRequest"),
-            eq("(Ljava/lang/Object;)V"),
-            eq(false)
-        );
+    @Test
+    void isAsyncStarted_null_returnsFalse() {
+        assertFalse(HttpPlugin.isAsyncStarted(null));
+    }
+
+    @Test
+    void isAsyncStarted_reflectsIsAsyncStarted() {
+        assertTrue(HttpPlugin.isAsyncStarted(new FakeRequest()));
+    }
+
+    // -----------------------------------------------------------------------
+    // getClientRequestMethod / getClientRequestUrl
+    // -----------------------------------------------------------------------
+
+    @Test
+    void getClientRequestMethod_null_returnsUnknown() {
+        assertEquals("UNKNOWN", HttpPlugin.getClientRequestMethod(null));
+    }
+
+    @Test
+    void getClientRequestUrl_null_returnsUnknownUrl() {
+        assertEquals("unknown-url", HttpPlugin.getClientRequestUrl(null));
+    }
+
+    // -----------------------------------------------------------------------
+    // Helper stubs
+    // -----------------------------------------------------------------------
+
+    public static class FakeRequest {
+        public String getMethod()     { return "POST"; }
+        public String getRequestURI() { return "/api/items"; }
+        public String getHeader(String name) { return "hdr-" + name; }
+        public boolean isAsyncStarted() { return true; }
+    }
+
+    public static class FakeResponse {
+        public int getStatus() { return 404; }
     }
 }

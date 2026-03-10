@@ -1,19 +1,22 @@
 package org.example.agent.plugin.executor;
 
+import net.bytebuddy.agent.builder.AgentBuilder;
+import net.bytebuddy.asm.Advice;
+import net.bytebuddy.dynamic.ClassFileLocator;
+import net.bytebuddy.implementation.bytecode.assign.Assigner;
+import org.example.agent.AgentInitializer;
 import org.example.agent.TracerPlugin;
 import org.example.agent.config.AgentConfig;
-import org.example.agent.plugin.BaseAdvice;
-import org.objectweb.asm.*;
-import org.objectweb.asm.commons.AdviceAdapter;
+import org.example.agent.core.ContextCapturingRunnable;
+import org.example.agent.core.TraceRuntime;
 
-import java.lang.instrument.ClassFileTransformer;
-import java.security.ProtectionDomain;
-import java.util.Arrays;
-import java.util.List;
+import static net.bytebuddy.matcher.ElementMatchers.*;
 
 /**
- * Enhanced ExecutorPlugin to support ThreadPoolExecutor, ScheduledThreadPoolExecutor,
- * and ForkJoinPool (used by CompletableFuture and parallel streams).
+ * ExecutorPlugin: instruments ThreadPoolExecutor, ScheduledThreadPoolExecutor,
+ * ForkJoinPool, and Spring's AsyncExecutionAspectSupport for context propagation.
+ *
+ * <p>Uses ByteBuddy @Advice inline instrumentation — no raw ASM required.
  */
 public class ExecutorPlugin implements TracerPlugin {
 
@@ -21,135 +24,63 @@ public class ExecutorPlugin implements TracerPlugin {
     @Override public boolean requiresBootstrapSearch() { return true; }
 
     @Override
-    public List<String> targetClassPrefixes() {
-        return AgentConfig.getPluginTargetPrefixes(pluginId(), Arrays.asList(
-            "java/util/concurrent/ThreadPoolExecutor",
-            "java/util/concurrent/ScheduledThreadPoolExecutor",
-            "java/util/concurrent/ForkJoinPool",
-            "org/springframework/aop/interceptor/"
-        ));
+    public AgentBuilder install(AgentBuilder builder) {
+        // Respect per-plugin enabled flag from AgentConfig
+        if (!isEnabled(null)) return builder;
+
+        ClassFileLocator agentLocator = AgentInitializer.getAgentLocator();
+
+        return builder
+            // ThreadPoolExecutor.execute(Runnable) — wraps Runnable with context
+            .type(named("java.util.concurrent.ThreadPoolExecutor"))
+            .transform((b, type, cl, m, pd) ->
+                b.visit(Advice.to(RunnableWrappingAdvice.class, agentLocator)
+                    .on(named("execute").and(takesArgument(0, Runnable.class)))))
+            // ScheduledThreadPoolExecutor.execute(Runnable)
+            .type(named("java.util.concurrent.ScheduledThreadPoolExecutor"))
+            .transform((b, type, cl, m, pd) ->
+                b.visit(Advice.to(RunnableWrappingAdvice.class, agentLocator)
+                    .on(named("execute").and(takesArgument(0, Runnable.class)))))
+            // ForkJoinPool: external Runnable submissions (CompletableFuture path)
+            .type(named("java.util.concurrent.ForkJoinPool"))
+            .transform((b, type, cl, m, pd) ->
+                b.visit(Advice.to(RunnableWrappingAdvice.class, agentLocator)
+                    .on((named("execute").or(nameStartsWith("external")))
+                        .and(takesArgument(0, Runnable.class)))))
+            // Spring @Async error handler
+            .type(named("org.springframework.aop.interceptor.AsyncExecutionAspectSupport"))
+            .transform((b, type, cl, m, pd) ->
+                b.visit(Advice.to(AsyncErrorAdvice.class, agentLocator)
+                    .on(named("handleError").and(takesArgument(0, Throwable.class)))));
     }
 
-    @Override
-    public List<ClassFileTransformer> transformers() {
-        return Arrays.asList(new ExecutorTransformer(), new AsyncExecutionAspectTransformer());
-    }
+    // -----------------------------------------------------------------------
+    // Advice classes (static methods inlined into target class by ByteBuddy)
+    // -----------------------------------------------------------------------
 
-    static class SafeClassWriter extends ClassWriter {
-        private final ClassLoader loader;
-        SafeClassWriter(ClassReader cr, ClassLoader loader) {
-            super(cr, ClassWriter.COMPUTE_FRAMES);
-            this.loader = loader != null ? loader : ClassLoader.getSystemClassLoader();
-        }
-        @Override
-        protected String getCommonSuperClass(String type1, String type2) {
-            try {
-                Class<?> c = Class.forName(type1.replace('/', '.'), false, loader);
-                Class<?> d = Class.forName(type2.replace('/', '.'), false, loader);
-                if (c.isAssignableFrom(d)) return type1;
-                if (d.isAssignableFrom(c)) return type2;
-                if (c.isInterface() || d.isInterface()) return "java/lang/Object";
-                do { c = c.getSuperclass(); } while (!c.isAssignableFrom(d));
-                return c.getName().replace('.', '/');
-            } catch (Throwable e) { return "java/lang/Object"; }
-        }
-    }
-
-    static class ExecutorTransformer implements ClassFileTransformer {
-        @Override
-        public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain pd, byte[] classfileBuffer) {
-            if (className == null) return null;
-            String normalized = className.replace('.', '/');
-            
-            boolean isTPE = "java/util/concurrent/ThreadPoolExecutor".equals(normalized) 
-                         || "java/util/concurrent/ScheduledThreadPoolExecutor".equals(normalized);
-            boolean isFJP = "java/util/concurrent/ForkJoinPool".equals(normalized);
-
-            if (!isTPE && !isFJP) return null;
-
-            try {
-                ClassReader cr = new ClassReader(classfileBuffer);
-                ClassWriter cw = new SafeClassWriter(cr, loader);
-                cr.accept(new ClassVisitor(Opcodes.ASM9, cw) {
-                    @Override
-                    public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
-                        MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
-                        
-                        // ThreadPoolExecutor / ScheduledThreadPoolExecutor
-                        if (isTPE && "execute".equals(name) && "(Ljava/lang/Runnable;)V".equals(descriptor)) {
-                            return new RunnableWrappingAdvice(mv, access, name, descriptor);
-                        }
-                        
-                        // ForkJoinPool (used by CompletableFuture)
-                        // In Java 17+, external tasks often go through externalPush or externalSubmit
-                        if (isFJP && (name.startsWith("external") || "execute".equals(name))) {
-                            if (descriptor.contains("Ljava/util/concurrent/ForkJoinTask;")) {
-                                // Task is already a ForkJoinTask, which is harder to wrap without subclasses.
-                                // For now, we focus on Runnable/Callable submissions.
-                            } else if (descriptor.contains("Ljava/lang/Runnable;")) {
-                                return new RunnableWrappingAdvice(mv, access, name, descriptor);
-                            }
-                        }
-                        return mv;
-                    }
-                }, ClassReader.EXPAND_FRAMES);
-                return cw.toByteArray();
-            } catch (Exception e) { return null; }
-        }
-    }
-
-    static class AsyncExecutionAspectTransformer implements ClassFileTransformer {
-        @Override
-        public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain pd, byte[] classfileBuffer) {
-            String normalized = className == null ? "" : className.replace('.', '/');
-            if (!"org/springframework/aop/interceptor/AsyncExecutionAspectSupport".equals(normalized)) return null;
-            try {
-                ClassReader cr = new ClassReader(classfileBuffer);
-                ClassWriter cw = new SafeClassWriter(cr, loader);
-                cr.accept(new ClassVisitor(Opcodes.ASM9, cw) {
-                    @Override
-                    public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
-                        MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
-                        if ("handleError".equals(name)
-                            && descriptor.startsWith("(Ljava/lang/Throwable;Ljava/lang/reflect/Method;[Ljava/lang/Object;)")) {
-                            return new AsyncErrorAdvice(mv, access, name, descriptor);
-                        }
-                        return mv;
-                    }
-                }, ClassReader.EXPAND_FRAMES);
-                return cw.toByteArray();
-            } catch (Throwable t) {
-                return null;
+    /**
+     * Replaces the Runnable argument with a ContextCapturingRunnable so that
+     * TxId and SpanId are propagated into the async thread.
+     */
+    public static class RunnableWrappingAdvice {
+        @Advice.OnMethodEnter
+        static void enter(
+            @Advice.Argument(value = 0, readOnly = false, typing = Assigner.Typing.DYNAMIC) Runnable runnable
+        ) {
+            if (runnable != null && !(runnable instanceof ContextCapturingRunnable)) {
+                runnable = new ContextCapturingRunnable(runnable);
             }
         }
     }
 
-    static class AsyncErrorAdvice extends BaseAdvice {
-        protected AsyncErrorAdvice(MethodVisitor mv, int access, String name, String descriptor) {
-            super(Opcodes.ASM9, mv, access, name, descriptor);
-        }
-
-        @Override
-        protected void onMethodEnter() {
-            mv.visitVarInsn(ALOAD, 1);
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onAsyncError", "(Ljava/lang/Throwable;)V", false);
-        }
-    }
-
     /**
-     * Wraps the Runnable argument (slot 1) with ContextCapturingRunnable.
+     * Intercepts Spring's AsyncExecutionAspectSupport.handleError() to record
+     * async execution errors in the trace.
      */
-    static class RunnableWrappingAdvice extends AdviceAdapter {
-        protected RunnableWrappingAdvice(MethodVisitor mv, int access, String name, String descriptor) {
-            super(Opcodes.ASM9, mv, access, name, descriptor);
-        }
-        @Override
-        protected void onMethodEnter() {
-            mv.visitTypeInsn(NEW, "org/example/agent/core/ContextCapturingRunnable");
-            mv.visitInsn(DUP);
-            mv.visitVarInsn(ALOAD, 1);
-            mv.visitMethodInsn(INVOKESPECIAL, "org/example/agent/core/ContextCapturingRunnable", "<init>", "(Ljava/lang/Runnable;)V", false);
-            mv.visitVarInsn(ASTORE, 1);
+    public static class AsyncErrorAdvice {
+        @Advice.OnMethodEnter
+        static void enter(@Advice.Argument(0) Throwable throwable) {
+            TraceRuntime.onAsyncError(throwable);
         }
     }
 }

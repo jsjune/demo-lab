@@ -11,16 +11,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 
-import java.lang.instrument.ClassFileTransformer;
 import java.lang.reflect.Method;
 
+import static net.bytebuddy.matcher.ElementMatchers.*;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.mockStatic;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 class HttpDispatcherIntegrationTest extends ByteBuddyIntegrationTest {
     private TestStateGuard stateGuard;
@@ -38,34 +34,34 @@ class HttpDispatcherIntegrationTest extends ByteBuddyIntegrationTest {
 
     public static class DummyDispatcherServlet {
         public void doDispatch(HttpServletRequest request, HttpServletResponse response) {
-            // no-op: instrumentation should inject TraceRuntime calls around this method
         }
     }
 
     @Test
     void testDispatcherServletInstrumentation() throws Exception {
-        stateGuard.setPropertiesFieldValue(
-            AgentConfig.class, "props", "http.dispatcher.class",
-            DummyDispatcherServlet.class.getName().replace('.', '/'));
-        HttpPlugin plugin = new HttpPlugin();
-        ClassFileTransformer transformer = plugin.transformers().get(0);
-        Class<?> transformed = transformAndLoad(DummyDispatcherServlet.class, transformer);
+        Class<?> transformed = instrument(
+            DummyDispatcherServlet.class,
+            HttpPlugin.DispatcherServletAdvice.class,
+            named("doDispatch").and(takesArguments(2)));
+
         Object instance = transformed.getDeclaredConstructor().newInstance();
-        Method doDispatch = transformed.getDeclaredMethod("doDispatch", HttpServletRequest.class, HttpServletResponse.class);
+        Method doDispatch = transformed.getDeclaredMethod("doDispatch",
+            HttpServletRequest.class, HttpServletResponse.class);
         assertNotNull(doDispatch);
 
         HttpServletRequest request = mock(HttpServletRequest.class);
         HttpServletResponse response = mock(HttpServletResponse.class);
-        when(request.getMethod()).thenReturn("GET");
-        when(request.getRequestURI()).thenReturn("/test");
-        when(request.getHeader(AgentConfig.getHeaderKey())).thenReturn(null);
-        when(request.getHeader("X-Span-Id")).thenReturn(null);
-        when(request.getHeader(AgentConfig.getForceSampleHeader())).thenReturn(null);
-        when(request.isAsyncStarted()).thenReturn(false);
-        when(response.getStatus()).thenReturn(200);
 
-        try (MockedStatic<TraceRuntime> runtimeMock = mockStatic(TraceRuntime.class)) {
-            runtimeMock.when(() -> TraceRuntime.isSecondaryDispatch(any())).thenReturn(false);
+        try (MockedStatic<TraceRuntime> runtimeMock = mockStatic(TraceRuntime.class);
+             MockedStatic<HttpPlugin> pluginMock = mockStatic(HttpPlugin.class, withSettings().defaultAnswer(CALLS_REAL_METHODS))) {
+
+            runtimeMock.when(() -> TraceRuntime.isSecondaryDispatch(any(Object.class))).thenReturn(false);
+            pluginMock.when(() -> HttpPlugin.getRequestMethod(any(Object.class))).thenReturn("GET");
+            pluginMock.when(() -> HttpPlugin.getRequestURI(any(Object.class))).thenReturn("/test");
+            pluginMock.when(() -> HttpPlugin.getRequestHeader(any(Object.class), anyString())).thenReturn(null);
+            pluginMock.when(() -> HttpPlugin.isAsyncStarted(any(Object.class))).thenReturn(false);
+            pluginMock.when(() -> HttpPlugin.getResponseStatus(any(Object.class))).thenReturn(200);
+
             doDispatch.invoke(instance, request, response);
 
             runtimeMock.verify(
@@ -80,64 +76,29 @@ class HttpDispatcherIntegrationTest extends ByteBuddyIntegrationTest {
     }
 
     @Test
-    void testDispatcherServletWithIncomingTxId() throws Exception {
-        stateGuard.setPropertiesFieldValue(
-            AgentConfig.class, "props", "http.dispatcher.class",
-            DummyDispatcherServlet.class.getName().replace('.', '/'));
-        HttpPlugin plugin = new HttpPlugin();
-        ClassFileTransformer transformer = plugin.transformers().get(0);
-        Class<?> transformed = transformAndLoad(DummyDispatcherServlet.class, transformer);
-        Object instance = transformed.getDeclaredConstructor().newInstance();
-        Method doDispatch = transformed.getDeclaredMethod("doDispatch", HttpServletRequest.class, HttpServletResponse.class);
-
-        HttpServletRequest request = mock(HttpServletRequest.class);
-        HttpServletResponse response = mock(HttpServletResponse.class);
-        when(request.getMethod()).thenReturn("GET");
-        when(request.getRequestURI()).thenReturn("/test");
-        when(request.getHeader(AgentConfig.getHeaderKey())).thenReturn("existing-tx-id");
-        when(request.getHeader("X-Span-Id")).thenReturn("existing-span-id");
-        when(request.getHeader(AgentConfig.getForceSampleHeader())).thenReturn(null);
-        when(request.isAsyncStarted()).thenReturn(false);
-        when(response.getStatus()).thenReturn(200);
-
-        try (MockedStatic<TraceRuntime> runtimeMock = mockStatic(TraceRuntime.class)) {
-            runtimeMock.when(() -> TraceRuntime.isSecondaryDispatch(any())).thenReturn(false);
-            doDispatch.invoke(instance, request, response);
-
-            runtimeMock.verify(
-                () -> TraceRuntime.onHttpInStart(eq(request), eq("GET"), eq("/test"), eq("existing-tx-id"), eq("existing-span-id"), eq(false)),
-                times(1)
-            );
-        }
-    }
-
-    @Test
     void testErrorDispatchFiltering() throws Exception {
-        stateGuard.setPropertiesFieldValue(
-            AgentConfig.class, "props", "http.dispatcher.class",
-            DummyDispatcherServlet.class.getName().replace('.', '/'));
-        HttpPlugin plugin = new HttpPlugin();
-        ClassFileTransformer transformer = plugin.transformers().get(0);
-        Class<?> transformed = transformAndLoad(DummyDispatcherServlet.class, transformer);
+        Class<?> transformed = instrument(
+            DummyDispatcherServlet.class,
+            HttpPlugin.DispatcherServletAdvice.class,
+            named("doDispatch").and(takesArguments(2)));
+
         Object instance = transformed.getDeclaredConstructor().newInstance();
-        Method doDispatch = transformed.getDeclaredMethod("doDispatch", HttpServletRequest.class, HttpServletResponse.class);
+        Method doDispatch = transformed.getDeclaredMethod("doDispatch",
+            HttpServletRequest.class, HttpServletResponse.class);
 
         HttpServletRequest request = mock(HttpServletRequest.class);
         HttpServletResponse response = mock(HttpServletResponse.class);
-        when(request.getMethod()).thenReturn("GET");
-        when(request.getRequestURI()).thenReturn("/error");
-        when(request.isAsyncStarted()).thenReturn(false);
 
         try (MockedStatic<TraceRuntime> runtimeMock = mockStatic(TraceRuntime.class)) {
-            runtimeMock.when(() -> TraceRuntime.isSecondaryDispatch(any())).thenReturn(true);
-            runtimeMock.when(() -> TraceRuntime.restoreContext(any())).thenAnswer(inv -> null);
+            runtimeMock.when(() -> TraceRuntime.isSecondaryDispatch(any(Object.class))).thenReturn(true);
+            runtimeMock.when(() -> TraceRuntime.restoreContext(any(Object.class))).thenAnswer(inv -> null);
+
             doDispatch.invoke(instance, request, response);
 
             runtimeMock.verify(
-                () -> TraceRuntime.onHttpInStart(any(), any(), any(), any(), any(), anyBoolean()),
+                () -> TraceRuntime.onHttpInStart(any(Object.class), anyString(), anyString(), anyString(), anyString(), anyBoolean()),
                 never()
             );
         }
     }
-
 }

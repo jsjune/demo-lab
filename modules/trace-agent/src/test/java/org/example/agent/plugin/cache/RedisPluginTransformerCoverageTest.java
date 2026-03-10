@@ -1,51 +1,67 @@
 package org.example.agent.plugin.cache;
 
-import org.example.agent.testutil.AsmTestUtils;
+import org.example.agent.core.TraceRuntime;
+import org.example.agent.instrumentation.ByteBuddyIntegrationTest;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
 
+import java.lang.reflect.Method;
+
+import static net.bytebuddy.matcher.ElementMatchers.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
-class RedisPluginTransformerCoverageTest {
+class RedisPluginTransformerCoverageTest extends ByteBuddyIntegrationTest {
 
     @Test
-    void lettuceTransformer_transformsRedisAsyncCommands() throws Exception {
-        byte[] original = AsmTestUtils.classWithMethods(
-            "io/lettuce/core/api/async/RedisAsyncCommandsImpl",
-            AsmTestUtils.MethodSpec.of("get", "(Ljava/lang/Object;)Lio/lettuce/core/RedisFuture;"),
-            AsmTestUtils.MethodSpec.of("set", "(Ljava/lang/Object;Ljava/lang/Object;)Lio/lettuce/core/RedisFuture;"));
-
-        RedisPlugin.LettuceTransformer t = new RedisPlugin.LettuceTransformer();
-        byte[] out = t.transform(getClass().getClassLoader(),
-            "io/lettuce/core/api/async/RedisAsyncCommandsImpl", null, null, original);
-
-        assertNotNull(out);
+    void pluginMetadata() {
+        RedisPlugin p = new RedisPlugin();
+        assertEquals("cache", p.pluginId());
     }
 
     @Test
-    void lettuceTransformer_nonTarget_returnsNull() throws Exception {
-        byte[] original = AsmTestUtils.classWithMethods("com/example/NoLettuce");
-        RedisPlugin.LettuceTransformer t = new RedisPlugin.LettuceTransformer();
-        assertNull(t.transform(getClass().getClassLoader(), "com/example/NoLettuce", null, null, original));
+    void lettuceAdvice_isAppliedToGet() throws Exception {
+        Class<?> cls = instrument(
+            DummyLettuceCommands.class,
+            RedisPlugin.LettuceAdvice.class,
+            named("get").and(takesArguments(1)));
+
+        Object instance = cls.getDeclaredConstructor().newInstance();
+        Method get = cls.getDeclaredMethod("get", Object.class);
+
+        try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+            rt.when(() -> TraceRuntime.safeKeyToString(any(Object.class))).thenReturn("my-key");
+            get.invoke(instance, "my-key");
+            rt.verify(() -> TraceRuntime.attachCacheGetListener(nullable(Object.class), eq("my-key")), atLeastOnce());
+        }
     }
 
     @Test
-    void jedisTransformer_transformsStringCommandSignature() throws Exception {
-        byte[] original = AsmTestUtils.classWithMethods(
-            "redis/clients/jedis/Jedis",
-            AsmTestUtils.MethodSpec.of("get", "(Ljava/lang/String;)Ljava/lang/String;"),
-            AsmTestUtils.MethodSpec.of("set", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"));
+    void jedisAdvice_isAppliedToGet() throws Exception {
+        Class<?> cls = instrument(
+            DummyJedis.class,
+            RedisPlugin.JedisAdvice.class,
+            named("get").and(takesArgument(0, String.class)));
 
-        RedisPlugin.JedisTransformer t = new RedisPlugin.JedisTransformer();
-        byte[] out = t.transform(getClass().getClassLoader(), "redis/clients/jedis/Jedis", null, null, original);
+        Object instance = cls.getDeclaredConstructor().newInstance();
+        Method get = cls.getDeclaredMethod("get", String.class);
 
-        assertNotNull(out);
+        try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+            get.invoke(instance, "cache-key");
+            rt.verify(() -> TraceRuntime.onCacheGet(eq("cache-key"), anyBoolean()), atLeastOnce());
+        }
     }
 
-    @Test
-    void jedisTransformer_nonTarget_returnsNull() throws Exception {
-        byte[] original = AsmTestUtils.classWithMethods("com/example/NoJedis");
-        RedisPlugin.JedisTransformer t = new RedisPlugin.JedisTransformer();
-        assertNull(t.transform(getClass().getClassLoader(), "com/example/NoJedis", null, null, original));
+    // -----------------------------------------------------------------------
+    // Helper stubs
+    // -----------------------------------------------------------------------
+
+    public static class DummyLettuceCommands {
+        public Object get(Object key) { return null; }
+    }
+
+    public static class DummyJedis {
+        public String get(String key) { return "value"; }
     }
 }
-

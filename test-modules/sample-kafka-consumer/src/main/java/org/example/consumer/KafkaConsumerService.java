@@ -38,6 +38,7 @@ public class KafkaConsumerService {
 
     @KafkaListener(topics = "test-topic")
     public void consumeTestTopic(String message) {
-        throw new RuntimeException("[KAFKA CONSUMER] Received on test-topic: " + message);
+        log.info("[KAFKA CONSUMER] Received on test-topic: {}", message);
+//        throw new RuntimeException("[KAFKA CONSUMER] Received on test-topic: " + message);
     }
 }

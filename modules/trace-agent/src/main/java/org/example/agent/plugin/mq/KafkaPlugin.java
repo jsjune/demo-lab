@@ -1,239 +1,131 @@
 package org.example.agent.plugin.mq;
 
+import net.bytebuddy.agent.builder.AgentBuilder;
+import net.bytebuddy.asm.Advice;
+import net.bytebuddy.dynamic.ClassFileLocator;
+import org.example.agent.AgentInitializer;
 import org.example.agent.TracerPlugin;
 import org.example.agent.config.AgentConfig;
 import org.example.agent.core.AgentLogger;
+import org.example.agent.core.SpanIdHolder;
+import org.example.agent.core.TraceRuntime;
 import org.example.agent.core.TxIdHolder;
-import org.example.agent.plugin.BaseAdvice;
 import org.example.agent.plugin.ReflectionUtils;
-import org.objectweb.asm.*;
-import org.objectweb.asm.commons.*;
 
-import java.lang.instrument.ClassFileTransformer;
 import java.nio.charset.StandardCharsets;
-import java.security.ProtectionDomain;
-import java.util.Arrays;
-import java.util.List;
 
+import static net.bytebuddy.matcher.ElementMatchers.*;
+
+/**
+ * KafkaPlugin: instruments KafkaProducer.send() and @KafkaListener adapter for MQ tracing.
+ *
+ * <p>Uses ByteBuddy @Advice inline instrumentation — no raw ASM required.
+ * Pre-scan workaround (SKIP_CODE/FRAMES/DEBUG) is no longer necessary since
+ * ByteBuddy's ElementMatcher handles class filtering before bytecode processing.
+ */
 public class KafkaPlugin implements TracerPlugin {
 
     @Override public String pluginId() { return "mq"; }
 
     @Override
-    public List<String> targetClassPrefixes() {
-        return AgentConfig.getPluginTargetPrefixes(pluginId(), Arrays.asList(
-                "org/apache/kafka/clients/producer/",
-                "org/apache/kafka/clients/consumer/",
-                "org/springframework/kafka/core/KafkaTemplate",
-                "org/springframework/kafka/listener/"
-        ));
+    public AgentBuilder install(AgentBuilder builder) {
+        if (!isEnabled(null)) return builder;
+
+        ClassFileLocator agentLocator = AgentInitializer.getAgentLocator();
+
+        return builder
+            // KafkaProducer.send(ProducerRecord, Callback) — inject txId header + record produce event
+            .type(nameStartsWith("org.apache.kafka.clients.producer."))
+            .transform((b, type, cl, m, pd) ->
+                b.visit(Advice.to(KafkaProducerEnterAdvice.class, agentLocator)
+                    .on(named("send")
+                        .and(takesArgument(0,
+                            named("org.apache.kafka.clients.producer.ProducerRecord"))))))
+            // MessagingMessageListenerAdapter.onMessage(ConsumerRecord, ...) — extract txId + record consume
+            .type(nameStartsWith("org.springframework.kafka.listener.")
+                .and(nameContains("MessagingMessageListenerAdapter")))
+            .transform((b, type, cl, m, pd) ->
+                b.visit(Advice.to(KafkaAdapterAdvice.class, agentLocator)
+                    .on(named("onMessage")
+                        .and(takesArgument(0,
+                            named("org.apache.kafka.clients.consumer.ConsumerRecord"))))))
+            // AbstractMessageListenerContainer.handleException() — mark consume error
+            .type(nameStartsWith("org.springframework.kafka.listener."))
+            .transform((b, type, cl, m, pd) ->
+                b.visit(Advice.to(KafkaHandleExceptionEnterAdvice.class, agentLocator)
+                    .on(named("handleException")
+                        .and(takesArgument(0, isSubTypeOf(Throwable.class))))));
     }
 
-    @Override
-    public List<ClassFileTransformer> transformers() {
-        return Arrays.asList(
-            new KafkaProducerTransformer(),
-            new KafkaAdapterTransformer()
-        );
+    // -----------------------------------------------------------------------
+    // Advice classes
+    // -----------------------------------------------------------------------
+
+    /** Injects txId header into ProducerRecord and records produce event. */
+    public static class KafkaProducerEnterAdvice {
+        @Advice.OnMethodEnter
+        static void enter(@Advice.Argument(0) Object record) {
+            KafkaPlugin.injectHeader(record, TxIdHolder.get());
+            String topic = KafkaPlugin.extractTopic(record);
+            String key = KafkaPlugin.extractKey(record);
+            TraceRuntime.onMqProduce("kafka", topic, key);
+        }
     }
 
-    static class KafkaAdapterTransformer implements ClassFileTransformer {
-        @Override
-        public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classfileBuffer) {
-            String normalized = className == null ? "" : className.replace('.', '/');
-            if (!normalized.startsWith("org/springframework/kafka/listener/")
-                && !normalized.contains("MessagingMessageListenerAdapter")) {
-                return null;
+    /** Extracts txId from ConsumerRecord headers, records consume start/end/error. */
+    public static class KafkaAdapterAdvice {
+
+        @Advice.OnMethodEnter
+        static void enter(
+            @Advice.Argument(0) Object record,
+            @Advice.Local("topic") String topic,
+            @Advice.Local("startTime") long startTime
+        ) {
+            String txId = KafkaPlugin.extractTxId(record);
+            KafkaPlugin.setTxIdIfPresent(txId);
+            topic = KafkaPlugin.extractTopic(record);
+            startTime = System.currentTimeMillis();
+            TraceRuntime.onMqConsumeStart("kafka", topic, TxIdHolder.get());
+        }
+
+        @Advice.OnMethodExit(onThrowable = Throwable.class)
+        static void exit(
+            @Advice.Thrown Throwable thrown,
+            @Advice.Local("topic") String topic,
+            @Advice.Local("startTime") long startTime
+        ) {
+            long durationMs = System.currentTimeMillis() - startTime;
+            if (thrown != null) {
+                TraceRuntime.onMqConsumeError(thrown, "kafka", topic, durationMs);
+            } else {
+                TraceRuntime.onMqConsumeComplete("kafka", topic, durationMs);
             }
-            try {
-                ClassReader reader = new ClassReader(classfileBuffer);
-                // Same getCommonSuperClass() safety as KafkaProducerTransformer.
-                ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS) {
-                    @Override
-                    protected String getCommonSuperClass(String type1, String type2) {
-                        try { return super.getCommonSuperClass(type1, type2); }
-                        catch (Throwable t) { return "java/lang/Object"; }
-                    }
-                };
-                reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
-                    @Override
-                    public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
-                        MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
-                        // Instrument onMessage(ConsumerRecord, ...) — handles all @KafkaListener dispatch
-                        if ("onMessage".equals(name) && descriptor.startsWith("(Lorg/apache/kafka/clients/consumer/ConsumerRecord;")) {
-                            return new KafkaAdapterAdvice(mv, access, name, descriptor);
-                        }
-                        // Spring Kafka adapter may catch user-listener exceptions and route them to handleException(...)
-                        // in this case ATHROW is not seen at onMessage exit, so mark the error here.
-                        if ("handleException".equals(name)
-                            && (descriptor.contains("ListenerExecutionFailedException")
-                                || descriptor.contains("Throwable")
-                                || descriptor.contains("Exception"))) {
-                            return new KafkaHandleExceptionAdvice(mv, access, name, descriptor);
-                        }
-                        return mv;
-                    }
-                }, ClassReader.EXPAND_FRAMES);
-                return writer.toByteArray();
-            } catch (Exception e) { return null; }
         }
     }
 
-    static class KafkaAdapterAdvice extends BaseAdvice {
-        private int topicLocalId = -1;
-
-        protected KafkaAdapterAdvice(MethodVisitor mv, int access, String name, String descriptor) {
-            super(Opcodes.ASM9, mv, access, name, descriptor);
-        }
-
-        @Override
-        protected void onMethodEnter() {
-            captureStartTime();
-
-            // Extract TxId from ConsumerRecord headers → TxIdHolder
-            // Use setTxIdIfPresent to avoid erasing an existing txId with null.
-            mv.visitVarInsn(ALOAD, 1);
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/plugin/mq/KafkaPlugin",
-                "extractTxId", "(Ljava/lang/Object;)Ljava/lang/String;", false);
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/plugin/mq/KafkaPlugin",
-                "setTxIdIfPresent", "(Ljava/lang/String;)V", false);
-
-            // Store topic in a local variable for reuse in onMethodExit
-            topicLocalId = newLocal(Type.getType(String.class));
-            mv.visitVarInsn(ALOAD, 1);
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/plugin/mq/KafkaPlugin",
-                "extractTopic", "(Ljava/lang/Object;)Ljava/lang/String;", false);
-            mv.visitVarInsn(ASTORE, topicLocalId);
-
-            // onMqConsumeStart("kafka", topic, txId)
-            mv.visitLdcInsn("kafka");
-            mv.visitVarInsn(ALOAD, topicLocalId);
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TxIdHolder",
-                "get", "()Ljava/lang/String;", false);
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime",
-                "onMqConsumeStart", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V", false);
-        }
-
-        @Override
-        protected void onMethodExit(int opcode) {
-            if (opcode == ATHROW) {
-                // Stack: [..., t] — DUP so the original throwable survives re-throw
-                mv.visitInsn(DUP);
-                mv.visitLdcInsn("kafka");
-                mv.visitVarInsn(ALOAD, topicLocalId);
-                calculateDurationAndPush();
-                mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime",
-                    "onMqConsumeError", "(Ljava/lang/Throwable;Ljava/lang/String;Ljava/lang/String;J)V", false);
-                return;
-            }
-            mv.visitLdcInsn("kafka");
-            mv.visitVarInsn(ALOAD, topicLocalId);
-            calculateDurationAndPush();
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime",
-                "onMqConsumeComplete", "(Ljava/lang/String;Ljava/lang/String;J)V", false);
-        }
-    }
-
-    static class KafkaHandleExceptionAdvice extends BaseAdvice {
-        private final int throwableArgIndex;
-
-        protected KafkaHandleExceptionAdvice(MethodVisitor mv, int access, String name, String descriptor) {
-            super(Opcodes.ASM9, mv, access, name, descriptor);
-            int found = -1;
-            Type[] args = Type.getArgumentTypes(descriptor);
-            int idx = ((access & Opcodes.ACC_STATIC) != 0) ? 0 : 1;
-            for (Type arg : args) {
-                if (found == -1 && arg.getSort() == Type.OBJECT) {
-                    String n = arg.getInternalName();
-                    if ("java/lang/Throwable".equals(n)
-                        || "java/lang/Exception".equals(n)
-                        || "java/lang/RuntimeException".equals(n)
-                        || n.endsWith("Exception")
-                        || n.endsWith("Error")) {
-                        found = idx;
-                    }
-                }
-                idx += arg.getSize();
-            }
-            this.throwableArgIndex = found;
-        }
-
-        @Override
-        protected void onMethodEnter() {
-            if (throwableArgIndex < 0) return;
-            mv.visitVarInsn(ALOAD, throwableArgIndex);
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime",
-                "onMqConsumeErrorMark", "(Ljava/lang/Throwable;)V", false);
-            // close consume span on paths where onMessage exits exceptionally without explicit ATHROW opcode
-            mv.visitLdcInsn("kafka");
-            mv.visitInsn(ACONST_NULL);
-            mv.visitLdcInsn(Long.valueOf(-1L));
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime",
-                "onMqConsumeComplete", "(Ljava/lang/String;Ljava/lang/String;J)V", false);
-        }
-    }
-
-    static class KafkaProducerTransformer implements ClassFileTransformer {
-        @Override
-        public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classfileBuffer) {
-            String normalized = className == null ? "" : className.replace('.', '/');
-            if (!normalized.startsWith("org/apache/kafka/clients/producer/")) return null;
-            try {
-                ClassReader reader = new ClassReader(classfileBuffer);
-                // COMPUTE_FRAMES triggers ClassWriter.getCommonSuperClass() → Class.forName() for every
-                // referenced type in KafkaProducer. Kafka internal classes may not yet be loaded at
-                // transform time, causing ClassNotFoundException → exception → transform returns null
-                // (KafkaProducer left uninstrumented → header never injected).
-                // Override getCommonSuperClass() to fall back to java/lang/Object on any failure.
-                ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS) {
-                    @Override
-                    protected String getCommonSuperClass(String type1, String type2) {
-                        try { return super.getCommonSuperClass(type1, type2); }
-                        catch (Throwable t) { return "java/lang/Object"; }
-                    }
-                };
-                reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
-                    @Override
-                    public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
-                        MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
-                        if ("send".equals(name) && descriptor.startsWith("(Lorg/apache/kafka/clients/producer/ProducerRecord;")) {
-                            return new KafkaProducerAdvice(mv, access, name, descriptor);
-                        }
-                        return mv;
-                    }
-                }, ClassReader.EXPAND_FRAMES);
-                return writer.toByteArray();
-            } catch (Exception e) { return null; }
-        }
-    }
-
-    static class KafkaProducerAdvice extends BaseAdvice {
-        protected KafkaProducerAdvice(MethodVisitor mv, int access, String name, String descriptor) {
-            super(Opcodes.ASM9, mv, access, name, descriptor);
-        }
-        @Override
-        protected void onMethodEnter() {
-            mv.visitVarInsn(ALOAD, 1);
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TxIdHolder", "get", "()Ljava/lang/String;", false);
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/plugin/mq/KafkaPlugin", "injectHeader", "(Ljava/lang/Object;Ljava/lang/String;)V", false);
-            mv.visitLdcInsn("kafka");
-            mv.visitVarInsn(ALOAD, 1);
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/plugin/mq/KafkaPlugin", "extractTopic", "(Ljava/lang/Object;)Ljava/lang/String;", false);
-            mv.visitVarInsn(ALOAD, 1);
-            mv.visitMethodInsn(INVOKEVIRTUAL, "org/apache/kafka/clients/producer/ProducerRecord", "key", "()Ljava/lang/Object;", false);
-            mv.visitMethodInsn(INVOKESTATIC, "java/lang/String", "valueOf", "(Ljava/lang/Object;)Ljava/lang/String;", false);
-            mv.visitMethodInsn(INVOKESTATIC, "org/example/agent/core/TraceRuntime", "onMqProduce", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V", false);
+    /**
+     * Intercepts handleException() to handle the case where the Kafka adapter
+     * catches the user listener exception and routes it through handleException()
+     * instead of propagating ATHROW from onMessage().
+     */
+    public static class KafkaHandleExceptionEnterAdvice {
+        @Advice.OnMethodEnter
+        static void enter(@Advice.Argument(0) Throwable throwable) {
+            TraceRuntime.onMqConsumeErrorMark(throwable);
+            TraceRuntime.onMqConsumeComplete("kafka", null, -1L);
         }
     }
 
     // -----------------------------------------------------------------------
-    // Helpers called from injected bytecode
+    // Static helpers — called from injected bytecode or tests
     // -----------------------------------------------------------------------
 
-    /** Sets TxIdHolder only when txId is non-null/non-empty to avoid erasing an existing txId. */
+    /** Sets TxIdHolder only when txId is non-null/non-empty to avoid erasing existing txId. */
     public static void setTxIdIfPresent(String txId) {
         if (txId != null && !txId.isEmpty()) {
+            TxIdHolder.clear();
             TxIdHolder.set(txId);
+            AgentLogger.info("[MQ-CONSUME] Adopted incoming txId: " + txId);
         }
     }
 
@@ -242,7 +134,8 @@ public class KafkaPlugin implements TracerPlugin {
         AgentLogger.debug("[MQ-PRODUCE] Injecting txId into record headers: " + txId);
         boolean[] injected = {false};
         ReflectionUtils.invokeMethod(record, "headers").ifPresent(headers -> {
-            ReflectionUtils.invokeMethod(headers, "add", AgentConfig.getHeaderKey(), txId.getBytes(StandardCharsets.UTF_8));
+            ReflectionUtils.invokeMethod(headers, "add",
+                AgentConfig.getHeaderKey(), txId.getBytes(StandardCharsets.UTF_8));
             injected[0] = true;
         });
         if (!injected[0]) {
@@ -257,13 +150,20 @@ public class KafkaPlugin implements TracerPlugin {
             .flatMap(header -> ReflectionUtils.invokeMethod(header, "value"))
             .map(val -> new String((byte[]) val, StandardCharsets.UTF_8))
             .orElse(null);
-        AgentLogger.debug("[MQ-CONSUME] extractTxId from record(" + record.getClass().getSimpleName() + "): " + txId);
+        AgentLogger.debug("[MQ-CONSUME] extractTxId from record("
+            + record.getClass().getSimpleName() + "): " + txId);
         return txId;
     }
 
     public static String extractTopic(Object record) {
         return ReflectionUtils.invokeMethod(record, "topic")
             .map(Object::toString)
+            .orElse(null);
+    }
+
+    public static String extractKey(Object record) {
+        return ReflectionUtils.invokeMethod(record, "key")
+            .map(String::valueOf)
             .orElse(null);
     }
 }

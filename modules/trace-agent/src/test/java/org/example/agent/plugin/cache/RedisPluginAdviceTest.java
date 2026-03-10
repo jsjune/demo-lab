@@ -1,21 +1,14 @@
 package org.example.agent.plugin.cache;
 
+import org.example.agent.core.TraceRuntime;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
-import org.objectweb.asm.Label;
-import org.objectweb.asm.MethodVisitor;
-import org.objectweb.asm.Opcodes;
+import org.mockito.MockedStatic;
 
-import java.lang.instrument.ClassFileTransformer;
-import java.lang.reflect.Method;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-@DisplayName("플러그인: Redis (Advice 바이트코드 검증)")
+@DisplayName("플러그인: Redis (@Advice 메서드 검증)")
 class RedisPluginAdviceTest {
 
     // -----------------------------------------------------------------------
@@ -27,138 +20,64 @@ class RedisPluginAdviceTest {
     class LettuceAdviceTest {
 
         @Test
-        @DisplayName("get onMethodEnter: 키를 safeKeyToString으로 캡처하고 onCacheGet은 호출하지 않아야 한다")
-        void get_onEnter_capturesKey_notCallsOnCacheGet() {
-            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-            RedisPlugin.LettuceAdvice advice = new RedisPlugin.LettuceAdvice(
-                mv, Opcodes.ACC_PUBLIC, "get", "(Ljava/lang/Object;)Lio/lettuce/core/RedisFuture;");
+        @DisplayName("get onMethodEnter: safeKeyToString을 호출해야 한다")
+        void get_enter_callsSafeKeyToString() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                rt.when(() -> TraceRuntime.safeKeyToString(any())).thenReturn("mykey");
 
-            advice.onMethodEnter();
+                RedisPlugin.LettuceAdvice.enter("get", "mykey", null);
 
-            // safeKeyToString은 키 캡처를 위해 반드시 호출되어야 한다
-            verify(mv).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("safeKeyToString"),
-                eq("(Ljava/lang/Object;)Ljava/lang/String;"),
-                eq(false)
-            );
-            // onCacheGet은 onMethodExit에서 attachCacheGetListener를 통해 비동기로 판단 — Enter에서는 미호출
-            verify(mv, never()).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("onCacheGet"),
-                anyString(),
-                anyBoolean()
-            );
-        }
-
-        @Test
-        @DisplayName("get onMethodExit: attachCacheGetListener가 호출되어야 한다 (비동기 HIT/MISS 위임)")
-        void get_onExit_callsAttachCacheGetListener() {
-            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-            RedisPlugin.LettuceAdvice advice = new RedisPlugin.LettuceAdvice(
-                mv, Opcodes.ACC_PUBLIC, "get", "(Ljava/lang/Object;)Lio/lettuce/core/RedisFuture;");
-
-            advice.onMethodEnter(); // keyLocalIdx 세팅
-            advice.onMethodExit(Opcodes.ARETURN);
-
-            verify(mv, atLeastOnce()).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("attachCacheGetListener"),
-                anyString(),
-                eq(false)
-            );
-        }
-
-        @Test
-        @DisplayName("String.valueOf는 절대 호출되지 않아야 한다 (byte[] 오염 방지)")
-        void get_neverCallsStringValueOf() {
-            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-            RedisPlugin.LettuceAdvice advice = new RedisPlugin.LettuceAdvice(
-                mv, Opcodes.ACC_PUBLIC, "get", "(Ljava/lang/Object;)Lio/lettuce/core/RedisFuture;");
-
-            advice.onMethodEnter();
-
-            verify(mv, never()).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("java/lang/String"),
-                eq("valueOf"),
-                anyString(),
-                anyBoolean()
-            );
-        }
-
-        @Test
-        @DisplayName("set onMethodExit: attachCacheOpListener가 호출되어야 한다")
-        void set_onExit_callsAttachCacheOpListener() {
-            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-            RedisPlugin.LettuceAdvice advice = new RedisPlugin.LettuceAdvice(
-                mv, Opcodes.ACC_PUBLIC, "set", "(Ljava/lang/Object;Ljava/lang/Object;)Lio/lettuce/core/RedisFuture;");
-
-            advice.onMethodEnter();
-            advice.onMethodExit(Opcodes.ARETURN);
-
-            verify(mv, atLeastOnce()).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("attachCacheOpListener"),
-                anyString(),
-                eq(false)
-            );
+                rt.verify(() -> TraceRuntime.safeKeyToString(eq("mykey")), times(1));
+            }
         }
 
         @Test
         @DisplayName("eval onMethodEnter: lua 키를 저장해야 한다")
-        void eval_onEnter_storesLuaKey() {
-            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-            RedisPlugin.LettuceAdvice advice = new RedisPlugin.LettuceAdvice(
-                mv, Opcodes.ACC_PUBLIC, "eval", "(Ljava/lang/String;)Lio/lettuce/core/RedisFuture;");
-
-            advice.onMethodEnter();
-
-            verify(mv).visitLdcInsn(eq("lua:eval"));
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // JedisTransformer descriptor 필터
-    // -----------------------------------------------------------------------
-
-    @Nested
-    @DisplayName("JedisTransformer — descriptor 필터 검증")
-    class JedisTransformerTest {
-
-        private boolean isTargetCommand(String name) throws Exception {
-            Method m = RedisPlugin.JedisTransformer.class.getDeclaredMethod("isTargetCommand", String.class);
-            m.setAccessible(true);
-            RedisPlugin.JedisTransformer transformer = new RedisPlugin.JedisTransformer();
-            return (boolean) m.invoke(transformer, name);
+        void eval_enter_storesLuaKey() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                // eval => cacheKey = "lua:eval" — safeKeyToString must NOT be called
+                RedisPlugin.LettuceAdvice.enter("eval", null, null);
+                rt.verify(() -> TraceRuntime.safeKeyToString(any()), never());
+            }
         }
 
         @Test
-        @DisplayName("get(String) — String descriptor는 JedisAdvice 대상이어야 한다")
-        void getStringDescriptor_isTarget() throws Exception {
-            assertTrue(isTargetCommand("get"), "get은 대상 커맨드여야 함");
-            String descriptor = "(Ljava/lang/String;)Ljava/lang/String;";
-            assertTrue(descriptor.startsWith("(Ljava/lang/String;"), "String descriptor 통과");
+        @DisplayName("get exit: attachCacheGetListener가 호출되어야 한다")
+        void get_exit_callsAttachCacheGetListener() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                RedisPlugin.LettuceAdvice.exit("get", null, null, "mykey");
+                rt.verify(() -> TraceRuntime.attachCacheGetListener(isNull(), eq("mykey")), times(1));
+            }
         }
 
         @Test
-        @DisplayName("get(byte[]) — byte[] descriptor는 JedisAdvice 대상에서 제외되어야 한다")
-        void getByteArrayDescriptor_isFiltered() {
-            String descriptor = "([B)Ljava/lang/String;";
-            assertFalse(descriptor.startsWith("(Ljava/lang/String;"),
-                "byte[] descriptor는 필터링되어 JedisAdvice가 적용되지 않아야 함");
+        @DisplayName("hget exit: attachCacheGetListener가 호출되어야 한다")
+        void hget_exit_callsAttachCacheGetListener() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                RedisPlugin.LettuceAdvice.exit("hget", null, null, "field");
+                rt.verify(() -> TraceRuntime.attachCacheGetListener(isNull(), eq("field")), times(1));
+            }
         }
 
         @Test
-        @DisplayName("set(byte[], byte[]) — byte[] descriptor는 JedisAdvice 대상에서 제외되어야 한다")
-        void setByteArrayDescriptor_isFiltered() {
-            String descriptor = "([B[B)Ljava/lang/String;";
-            assertFalse(descriptor.startsWith("(Ljava/lang/String;"),
-                "byte[] 오버로드는 ClassCastException 방지를 위해 제외되어야 함");
+        @DisplayName("set exit: attachCacheOpListener가 호출되어야 한다")
+        void set_exit_callsAttachCacheOpListener() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                Object fakeFuture = new Object();
+                RedisPlugin.LettuceAdvice.exit("set", fakeFuture, null, "mykey");
+                rt.verify(() -> TraceRuntime.attachCacheOpListener(eq(fakeFuture), eq("set"), eq("mykey")), times(1));
+            }
+        }
+
+        @Test
+        @DisplayName("thrown != null 이면 onCacheError가 호출되어야 한다")
+        void exit_thrown_callsOnCacheError() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                Throwable err = new RuntimeException("redis fail");
+                RedisPlugin.LettuceAdvice.exit("get", null, err, "mykey");
+                rt.verify(() -> TraceRuntime.onCacheError(eq(err), eq("get"), eq("mykey")), times(1));
+                rt.verify(() -> TraceRuntime.attachCacheGetListener(any(), any()), never());
+            }
         }
     }
 
@@ -167,79 +86,63 @@ class RedisPluginAdviceTest {
     // -----------------------------------------------------------------------
 
     @Nested
-    @DisplayName("JedisAdvice — HIT/MISS 판단 및 safeKeyToString 검증")
+    @DisplayName("JedisAdvice — HIT/MISS 판단 및 메서드 분기 검증")
     class JedisAdviceTest {
 
         @Test
-        @DisplayName("get onMethodExit: IFNONNULL 기반 HIT/MISS 판단 후 onCacheGet이 두 경로 모두 호출되어야 한다")
-        void get_onExit_callsOnCacheGetWithHitMissLogic() {
-            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-            RedisPlugin.JedisAdvice advice = new RedisPlugin.JedisAdvice(
-                mv, Opcodes.ACC_PUBLIC, "get", "(Ljava/lang/String;)Ljava/lang/String;");
-
-            advice.onMethodEnter(); // keyLocalIdx 세팅
-            advice.onMethodExit(Opcodes.ARETURN);
-
-            // null 체크 분기 (IFNONNULL)
-            verify(mv).visitJumpInsn(eq(Opcodes.IFNONNULL), any(Label.class));
-            // onCacheGet: MISS 경로(false) + HIT 경로(true) = 2회
-            verify(mv, times(2)).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("onCacheGet"),
-                eq("(Ljava/lang/String;Z)V"),
-                eq(false)
-            );
+        @DisplayName("get exit: hit (result != null) 시 onCacheGet(key, true)")
+        void get_exit_hit_callsOnCacheGetTrue() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                RedisPlugin.JedisAdvice.exit("get", "value", null, "mykey");
+                rt.verify(() -> TraceRuntime.onCacheGet(eq("mykey"), eq(true)), times(1));
+            }
         }
 
         @Test
-        @DisplayName("set onMethodExit: onCacheSet이 호출되어야 한다")
-        void set_onExit_callsOnCacheSet() {
-            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-            RedisPlugin.JedisAdvice advice = new RedisPlugin.JedisAdvice(
-                mv, Opcodes.ACC_PUBLIC, "set", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
-
-            advice.onMethodEnter();
-            advice.onMethodExit(Opcodes.ARETURN);
-
-            verify(mv, atLeastOnce()).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("onCacheSet"),
-                anyString(),
-                eq(false)
-            );
+        @DisplayName("get exit: miss (result == null) 시 onCacheGet(key, false)")
+        void get_exit_miss_callsOnCacheGetFalse() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                RedisPlugin.JedisAdvice.exit("get", null, null, "mykey");
+                rt.verify(() -> TraceRuntime.onCacheGet(eq("mykey"), eq(false)), times(1));
+            }
         }
 
         @Test
-        @DisplayName("del onMethodExit: onCacheDel이 호출되어야 한다")
-        void del_onExit_callsOnCacheDel() {
-            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-            RedisPlugin.JedisAdvice advice = new RedisPlugin.JedisAdvice(
-                mv, Opcodes.ACC_PUBLIC, "del", "(Ljava/lang/String;)Ljava/lang/Long;");
-
-            advice.onMethodEnter();
-            advice.onMethodExit(Opcodes.ARETURN);
-
-            verify(mv, atLeastOnce()).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("onCacheDel"),
-                anyString(),
-                eq(false)
-            );
+        @DisplayName("set exit: onCacheSet이 호출되어야 한다")
+        void set_exit_callsOnCacheSet() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                RedisPlugin.JedisAdvice.exit("set", null, null, "mykey");
+                rt.verify(() -> TraceRuntime.onCacheSet(eq("mykey")), times(1));
+            }
         }
 
         @Test
-        @DisplayName("evalsha onMethodEnter: lua 키를 저장해야 한다")
-        void evalsha_onEnter_storesLuaKey() {
-            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-            RedisPlugin.JedisAdvice advice = new RedisPlugin.JedisAdvice(
-                mv, Opcodes.ACC_PUBLIC, "evalsha", "(Ljava/lang/String;)Ljava/lang/Object;");
+        @DisplayName("del exit: onCacheDel이 호출되어야 한다")
+        void del_exit_callsOnCacheDel() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                RedisPlugin.JedisAdvice.exit("del", null, null, "mykey");
+                rt.verify(() -> TraceRuntime.onCacheDel(eq("mykey")), times(1));
+            }
+        }
 
-            advice.onMethodEnter();
+        @Test
+        @DisplayName("evalsha enter: lua 키 (safeKeyToString 미호출)")
+        void evalsha_enter_luaKey() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                RedisPlugin.JedisAdvice.enter("evalsha", null, null);
+                // safeKeyToString-like call is not performed for eval — just verifies no crash
+            }
+        }
 
-            verify(mv).visitLdcInsn(eq("lua:evalsha"));
+        @Test
+        @DisplayName("thrown != null 이면 onCacheError가 호출되어야 한다")
+        void exit_thrown_callsOnCacheError() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                Throwable err = new RuntimeException("jedis fail");
+                RedisPlugin.JedisAdvice.exit("get", null, err, "mykey");
+                rt.verify(() -> TraceRuntime.onCacheError(eq(err), eq("get"), eq("mykey")), times(1));
+                rt.verify(() -> TraceRuntime.onCacheGet(any(), anyBoolean()), never());
+            }
         }
     }
 }

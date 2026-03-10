@@ -1,38 +1,29 @@
 package org.example.agent.plugin.jdbc;
 
-import org.example.agent.testutil.AsmTestUtils;
+import org.example.agent.instrumentation.ByteBuddyIntegrationTest;
+import org.example.agent.core.TraceRuntime;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.FieldVisitor;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
 import java.lang.reflect.Field;
-import java.util.List;
+import java.lang.reflect.Method;
 
+import static net.bytebuddy.matcher.ElementMatchers.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.*;
 
-class JdbcPluginTransformerCoverageTest {
-
-    @Test
-    void jdbcStatementTransformer_transformsPreparedStatementExecute() throws Exception {
-        byte[] original = AsmTestUtils.classWithMethods(
-            "org/postgresql/jdbc/PgPreparedStatement",
-            AsmTestUtils.MethodSpec.of("execute", "()Z"),
-            AsmTestUtils.MethodSpec.of("executeQuery", "()Ljava/sql/ResultSet;"));
-
-        JdbcPlugin.JdbcStatementTransformer t = new JdbcPlugin.JdbcStatementTransformer();
-        byte[] out = t.transform(getClass().getClassLoader(), "org/postgresql/jdbc/PgPreparedStatement",
-            null, null, original);
-
-        assertNotNull(out);
-    }
+class JdbcPluginTransformerCoverageTest extends ByteBuddyIntegrationTest {
 
     @Test
-    void jdbcStatementTransformer_nonStatement_returnsNull() throws Exception {
-        byte[] original = AsmTestUtils.classWithMethods("com/example/NonSqlClass");
-        JdbcPlugin.JdbcStatementTransformer t = new JdbcPlugin.JdbcStatementTransformer();
-        assertNull(t.transform(getClass().getClassLoader(), "com/example/NonSqlClass", null, null, original));
+    void pluginMetadata() {
+        JdbcPlugin p = new JdbcPlugin();
+        assertEquals("jdbc", p.pluginId());
+        assertFalse(p.requiresBootstrapSearch());
     }
 
     @Test
@@ -46,6 +37,13 @@ class JdbcPluginTransformerCoverageTest {
     @Test
     void parseDbHost_null_returnsUnknown() {
         assertEquals("unknown-db", JdbcPlugin.parseDbHost(null));
+    }
+
+    @Test
+    void parseDbHost_extraBranches() {
+        assertEquals("not-a-url", JdbcPlugin.parseDbHost("not-a-url"));
+        assertEquals("mysql://host:3306", JdbcPlugin.parseDbHost("jdbc:mysql://u:p@host:3306/db"));
+        assertEquals("sqlserver://host:1433", JdbcPlugin.parseDbHost("jdbc:sqlserver://host:1433;databaseName=x"));
     }
 
     @Test
@@ -63,22 +61,6 @@ class JdbcPluginTransformerCoverageTest {
     }
 
     @Test
-    void pluginMetadata_andTargetPrefixes() {
-        JdbcPlugin p = new JdbcPlugin();
-        assertEquals("jdbc", p.pluginId());
-        assertEquals(1, p.transformers().size());
-        List<String> prefixes = p.targetClassPrefixes();
-        assertTrue(prefixes.stream().anyMatch(s -> s.contains("jdbc")));
-    }
-
-    @Test
-    void parseDbHost_extraBranches() {
-        assertEquals("not-a-url", JdbcPlugin.parseDbHost("not-a-url"));
-        assertEquals("mysql://host:3306", JdbcPlugin.parseDbHost("jdbc:mysql://u:p@host:3306/db"));
-        assertEquals("sqlserver://host:1433", JdbcPlugin.parseDbHost("jdbc:sqlserver://host:1433;databaseName=x"));
-    }
-
-    @Test
     void extractSql_mysqlBranch_readsQueryField() throws Exception {
         byte[] bytes = mysqlLikePreparedStatementBytes();
         Class<?> clazz = new DefineClassLoader().define("com.mysql.jdbc.FakePreparedStatement", bytes);
@@ -90,30 +72,44 @@ class JdbcPluginTransformerCoverageTest {
         assertEquals("SELECT * FROM user", JdbcPlugin.extractSql(instance));
     }
 
-    static class NoConnectionStatement {
-        @SuppressWarnings("unused")
-        public Object getConnection() {
-            return null;
+    @Test
+    void instrument_executeIsInstrumented() throws Exception {
+        Class<?> cls = instrument(FakePreparedStatement.class, JdbcPlugin.JdbcStatementAdvice.class,
+            namedOneOf("execute", "executeQuery").and(takesNoArguments()));
+
+        Object instance = cls.getDeclaredConstructor(String.class).newInstance("SELECT 1");
+        Method execute = cls.getDeclaredMethod("execute");
+
+        try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+            execute.invoke(instance);
+            rt.verify(() -> TraceRuntime.onDbQueryStart(anyString(), anyString()), times(1));
+            rt.verify(() -> TraceRuntime.onDbQueryEnd(anyString(), anyLong(), anyString()), times(1));
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Helper classes
+    // -----------------------------------------------------------------------
+
+    public static class FakePreparedStatement {
+        private final String sql;
+        public FakePreparedStatement(String sql) { this.sql = sql; }
+        public boolean execute() { return true; }
+        @Override public String toString() { return sql; }
+    }
+
+    static class NoConnectionStatement {
+        @SuppressWarnings("unused") public Object getConnection() { return null; }
     }
 
     static class FullChainStatement {
         private final String url;
-
-        FullChainStatement(String url) {
-            this.url = url;
-        }
-
-        @SuppressWarnings("unused")
-        public Object getConnection() {
+        FullChainStatement(String url) { this.url = url; }
+        @SuppressWarnings("unused") public Object getConnection() {
             return new Object() {
-                @SuppressWarnings("unused")
-                public Object getMetaData() {
+                @SuppressWarnings("unused") public Object getMetaData() {
                     return new Object() {
-                        @SuppressWarnings("unused")
-                        public String getURL() {
-                            return url;
-                        }
+                        @SuppressWarnings("unused") public String getURL() { return url; }
                     };
                 }
             };
@@ -122,15 +118,8 @@ class JdbcPluginTransformerCoverageTest {
 
     static class SimpleStatement {
         private final String text;
-
-        SimpleStatement(String text) {
-            this.text = text;
-        }
-
-        @Override
-        public String toString() {
-            return text;
-        }
+        SimpleStatement(String text) { this.text = text; }
+        @Override public String toString() { return text; }
     }
 
     static class DefineClassLoader extends ClassLoader {

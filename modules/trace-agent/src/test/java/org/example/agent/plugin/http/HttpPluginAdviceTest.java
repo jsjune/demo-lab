@@ -1,268 +1,185 @@
 package org.example.agent.plugin.http;
 
+import org.example.agent.config.AgentConfig;
+import org.example.agent.core.SpanIdHolder;
+import org.example.agent.core.TraceRuntime;
+import org.example.agent.core.TxIdHolder;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
-import org.objectweb.asm.MethodVisitor;
-import org.objectweb.asm.Opcodes;
+import org.mockito.MockedStatic;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+/**
+ * Tests for HttpPlugin @Advice static methods (direct invocation).
+ *
+ * <p>ByteBuddy @Advice classes are plain static methods — we test them directly.
+ */
 class HttpPluginAdviceTest {
+
+    @BeforeEach
+    void setUp() {
+        TxIdHolder.clear();
+        SpanIdHolder.clear();
+    }
+
+    @AfterEach
+    void tearDown() {
+        TxIdHolder.clear();
+        SpanIdHolder.clear();
+    }
+
+    // -----------------------------------------------------------------------
+    // DispatcherServletAdvice
+    // -----------------------------------------------------------------------
 
     @Nested
     @DisplayName("DispatcherServletAdvice 테스트")
     class DispatcherServletAdviceTest {
 
         @Test
-        @DisplayName("onMethodEnter 시 isSecondaryDispatch 및 onHttpInStart가 호출되어야 한다")
-        void onMethodEnter_callsRuntime() {
-            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-            // descriptor index hints for isJakarta: contains "HttpServletRequest"
-            HttpPlugin.DispatcherServletAdvice advice = 
-                new HttpPlugin.DispatcherServletAdvice(mv, Opcodes.ACC_PROTECTED, "doDispatch", 
-                    "(Ljakarta/servlet/http/HttpServletRequest;Ljakarta/servlet/http/HttpServletResponse;)V", true);
+        @DisplayName("primary dispatch: onHttpInStart가 호출되어야 한다")
+        void enter_primaryDispatch_callsOnHttpInStart() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class);
+                 MockedStatic<HttpPlugin> hp = mockStatic(HttpPlugin.class, withSettings().defaultAnswer(CALLS_REAL_METHODS))) {
 
-            advice.onMethodEnter();
+                rt.when(() -> TraceRuntime.isSecondaryDispatch(any())).thenReturn(false);
+                hp.when(() -> HttpPlugin.getRequestMethod(any())).thenReturn("GET");
+                hp.when(() -> HttpPlugin.getRequestURI(any())).thenReturn("/api/test");
+                hp.when(() -> HttpPlugin.getRequestHeader(any(), anyString())).thenReturn(null);
 
-            // verify secondary dispatch check
-            verify(mv, atLeastOnce()).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("isSecondaryDispatch"),
-                anyString(),
-                eq(false)
-            );
+                Object fakeRequest = new Object();
+                HttpPlugin.DispatcherServletAdvice.enter(fakeRequest, 0L, false);
 
-            // verify onHttpInStart call (new signature: 6 args)
-            verify(mv, atLeastOnce()).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("onHttpInStart"),
-                eq("(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Z)V"),
-                eq(false)
-            );
+                rt.verify(() -> TraceRuntime.onHttpInStart(eq(fakeRequest), eq("GET"), eq("/api/test"), isNull(), isNull(), eq(false)), times(1));
+            }
         }
 
         @Test
-        @DisplayName("onMethodExit(ATHROW) 시 onHttpInError 호출 바이트코드가 삽입되어야 한다")
-        void onMethodExit_athrow_callsOnHttpInError() {
-            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-            HttpPlugin.DispatcherServletAdvice advice =
-                new HttpPlugin.DispatcherServletAdvice(
-                    mv, Opcodes.ACC_PROTECTED, "doDispatch",
-                    "(Ljakarta/servlet/http/HttpServletRequest;Ljakarta/servlet/http/HttpServletResponse;)V", true);
+        @DisplayName("secondary dispatch: isSecondaryDispatch true → onHttpInStart 미호출")
+        void enter_secondaryDispatch_skipsOnHttpInStart() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                rt.when(() -> TraceRuntime.isSecondaryDispatch(any())).thenReturn(true);
+                rt.when(() -> TraceRuntime.restoreContext(any())).thenAnswer(inv -> null);
 
-            advice.onMethodEnter();
-            advice.onMethodExit(Opcodes.ATHROW);
+                Object fakeRequest = new Object();
+                HttpPlugin.DispatcherServletAdvice.enter(fakeRequest, 0L, false);
 
-            verify(mv, atLeastOnce()).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("onHttpInError"),
-                eq("(Ljava/lang/Throwable;Ljava/lang/String;Ljava/lang/String;J)V"),
-                eq(false)
-            );
+                rt.verify(() -> TraceRuntime.onHttpInStart(any(), any(), any(), any(), any(), anyBoolean()), never());
+            }
         }
 
         @Test
-        @DisplayName("onMethodExit(RETURN) 시 onHttpInEnd/registerAsyncListener 분기 코드가 삽입되어야 한다")
-        void onMethodExit_return_emitsEndAndAsyncRegistrationCode() {
-            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-            HttpPlugin.DispatcherServletAdvice advice =
-                new HttpPlugin.DispatcherServletAdvice(
-                    mv, Opcodes.ACC_PROTECTED, "doDispatch",
-                    "(Ljakarta/servlet/http/HttpServletRequest;Ljakarta/servlet/http/HttpServletResponse;)V", true);
+        @DisplayName("exit: thrown != null → onHttpInError 호출")
+        void exit_thrown_callsOnHttpInError() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class);
+                 MockedStatic<HttpPlugin> hp = mockStatic(HttpPlugin.class, withSettings().defaultAnswer(CALLS_REAL_METHODS))) {
 
-            advice.onMethodEnter();
-            advice.onMethodExit(Opcodes.RETURN);
+                hp.when(() -> HttpPlugin.getRequestMethod(any())).thenReturn("POST");
+                hp.when(() -> HttpPlugin.getRequestURI(any())).thenReturn("/fail");
 
-            verify(mv, atLeastOnce()).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("onHttpInEnd"),
-                eq("(Ljava/lang/String;Ljava/lang/String;IJ)V"),
-                eq(false)
-            );
-            verify(mv, atLeastOnce()).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("registerAsyncListener"),
-                eq("(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/String;J)V"),
-                eq(false)
-            );
+                Throwable err = new RuntimeException("boom");
+                HttpPlugin.DispatcherServletAdvice.exit(new Object(), new Object(), err, 100L, true);
+
+                rt.verify(() -> TraceRuntime.onHttpInError(eq(err), eq("POST"), eq("/fail"), anyLong()), times(1));
+                rt.verify(() -> TraceRuntime.onHttpInEnd(any(), any(), anyInt(), anyLong()), never());
+            }
         }
 
         @Test
-        @DisplayName("@TraceIgnore 애노테이션이면 enter/exit에서 runtime 호출을 삽입하지 않아야 한다")
-        void traceIgnoreAnnotation_skipsInstrumentation() {
-            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-            HttpPlugin.DispatcherServletAdvice advice =
-                new HttpPlugin.DispatcherServletAdvice(
-                    mv, Opcodes.ACC_PROTECTED, "doDispatch",
-                    "(Ljakarta/servlet/http/HttpServletRequest;Ljakarta/servlet/http/HttpServletResponse;)V", true);
+        @DisplayName("exit: normal sync → onHttpInEnd 호출")
+        void exit_normal_callsOnHttpInEnd() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class);
+                 MockedStatic<HttpPlugin> hp = mockStatic(HttpPlugin.class, withSettings().defaultAnswer(CALLS_REAL_METHODS))) {
 
-            advice.visitAnnotation("Lorg/example/TraceIgnore;", true);
-            advice.onMethodEnter();
-            advice.onMethodExit(Opcodes.RETURN);
+                hp.when(() -> HttpPlugin.getRequestMethod(any())).thenReturn("GET");
+                hp.when(() -> HttpPlugin.getRequestURI(any())).thenReturn("/ok");
+                hp.when(() -> HttpPlugin.isAsyncStarted(any())).thenReturn(false);
+                hp.when(() -> HttpPlugin.getResponseStatus(any())).thenReturn(200);
 
-            verify(mv, never()).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("onHttpInStart"),
-                anyString(),
-                eq(false)
-            );
+                HttpPlugin.DispatcherServletAdvice.exit(new Object(), new Object(), null, 100L, true);
+
+                rt.verify(() -> TraceRuntime.onHttpInEnd(eq("GET"), eq("/ok"), eq(200), anyLong()), times(1));
+            }
+        }
+
+        @Test
+        @DisplayName("exit: isTracked=false → 아무것도 호출되지 않아야 한다")
+        void exit_notTracked_skipsAll() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                HttpPlugin.DispatcherServletAdvice.exit(new Object(), new Object(), null, 100L, false);
+                rt.verify(() -> TraceRuntime.onHttpInEnd(any(), any(), anyInt(), anyLong()), never());
+                rt.verify(() -> TraceRuntime.onHttpInError(any(), any(), any(), anyLong()), never());
+            }
         }
     }
 
-    @Nested
-    @DisplayName("DispatcherHandlerAdvice 테스트 (WebFlux)")
-    class DispatcherHandlerAdviceTest {
-
-        @Test
-        @DisplayName("onMethodEnter 시 onWebFluxHandleStart 호출")
-        void onMethodEnter_callsRuntime() {
-            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-            HttpPlugin.DispatcherHandlerAdvice advice =
-                new HttpPlugin.DispatcherHandlerAdvice(mv, Opcodes.ACC_PUBLIC, "handle",
-                    "(Lorg/springframework/web/server/ServerWebExchange;)Lreactor/core/publisher/Mono;");
-
-            advice.onMethodEnter();
-
-            verify(mv, times(1)).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("onWebFluxHandleStart"),
-                eq("(Ljava/lang/Object;)V"),
-                eq(false)
-            );
-        }
-
-        @Test
-        @DisplayName("onMethodExit(ARETURN) 시 wrapWebFluxHandle 및 clear 호출")
-        void onMethodExit_callsRuntimeAndClear() {
-            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-            HttpPlugin.DispatcherHandlerAdvice advice =
-                new HttpPlugin.DispatcherHandlerAdvice(mv, Opcodes.ACC_PUBLIC, "handle",
-                    "(Lorg/springframework/web/server/ServerWebExchange;)Lreactor/core/publisher/Mono;");
-
-            advice.onMethodExit(Opcodes.ARETURN);
-
-            verify(mv, atLeastOnce()).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("wrapWebFluxHandle"),
-                eq("(Ljava/lang/Object;Ljava/lang/Object;J)Ljava/lang/Object;"),
-                eq(false)
-            );
-            
-            // verify clear calls
-            verify(mv, atLeastOnce()).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TxIdHolder"),
-                eq("clear"),
-                eq("()V"),
-                eq(false)
-            );
-        }
-    }
+    // -----------------------------------------------------------------------
+    // RestTemplateAdvice
+    // -----------------------------------------------------------------------
 
     @Nested
-    @DisplayName("RestTemplateAdvice 테스트")
+    @DisplayName("RestTemplate Advice 테스트")
     class RestTemplateAdviceTest {
 
         @Test
-        @DisplayName("onMethodExit(ARETURN) 시 onHttpOut 호출")
-        void onMethodExit_callsRuntime() {
-            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-            HttpPlugin.RestTemplateAdvice advice =
-                new RestTemplateAdviceFixed(mv, Opcodes.ACC_PROTECTED, "doExecute",
-                    "(Ljava/net/URI;Lorg/springframework/http/HttpMethod;Lorg/springframework/web/client/RequestCallback;Lorg/springframework/web/client/ResponseExtractor;)Ljava/lang/Object;");
-
-            advice.onMethodExit(Opcodes.ARETURN);
-
-            verify(mv, atLeastOnce()).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("onHttpOut"),
-                eq("(Ljava/lang/String;Ljava/lang/String;IJ)V"),
-                eq(false)
-            );
-        }
-
-        @Test
-        @DisplayName("onMethodExit(ATHROW) 시 onHttpOutError 호출")
-        void onMethodExit_throw_callsOutError() {
-            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-            HttpPlugin.RestTemplateAdvice advice =
-                new RestTemplateAdviceFixed(mv, Opcodes.ACC_PROTECTED, "doExecute",
-                    "(Ljava/net/URI;Lorg/springframework/http/HttpMethod;Lorg/springframework/web/client/RequestCallback;Lorg/springframework/web/client/ResponseExtractor;)Ljava/lang/Object;");
-
-            advice.onMethodExit(Opcodes.ATHROW);
-
-            verify(mv, atLeastOnce()).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("onHttpOutError"),
-                eq("(Ljava/lang/Throwable;Ljava/lang/String;Ljava/lang/String;J)V"),
-                eq(false)
-            );
-        }
-
-        @Test
-        @DisplayName("Spring 6.1 doExecute(5 args)에서도 HTTP method 인덱스를 올바르게 사용")
-        void onMethodExit_spring61Descriptor_usesMethodIndex3() {
-            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-            HttpPlugin.RestTemplateAdvice advice =
-                new RestTemplateAdviceFixed(mv, Opcodes.ACC_PROTECTED, "doExecute",
-                    "(Ljava/net/URI;Ljava/lang/String;Lorg/springframework/http/HttpMethod;Lorg/springframework/web/client/RequestCallback;Lorg/springframework/web/client/ResponseExtractor;)Ljava/lang/Object;");
-
-            advice.onMethodExit(Opcodes.ARETURN);
-
-            verify(mv, atLeastOnce()).visitVarInsn(eq(Opcodes.ALOAD), eq(3));
-            verify(mv, atLeastOnce()).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/core/TraceRuntime"),
-                eq("onHttpOut"),
-                eq("(Ljava/lang/String;Ljava/lang/String;IJ)V"),
-                eq(false)
-            );
-        }
-
-        // Helper to expose internal advice for testing
-        class RestTemplateAdviceFixed extends HttpPlugin.RestTemplateAdvice {
-            RestTemplateAdviceFixed(MethodVisitor mv, int access, String name, String desc) {
-                super(mv, access, name, desc);
+        @DisplayName("RestTemplateAdvice4Args: 정상 종료 시 onHttpOut 호출")
+        void advice4Args_exit_normal_callsOnHttpOut() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                java.net.URI uri = java.net.URI.create("http://example.com/api");
+                HttpPlugin.RestTemplateAdvice4Args.exit(uri, fakeHttpMethod("GET"), null, 100L);
+                rt.verify(() -> TraceRuntime.onHttpOut(eq("GET"), eq("http://example.com/api"), eq(200), anyLong()), times(1));
             }
-            @Override public void onMethodExit(int opcode) { super.onMethodExit(opcode); }
+        }
+
+        @Test
+        @DisplayName("RestTemplateAdvice4Args: 예외 시 onHttpOutError 호출")
+        void advice4Args_exit_thrown_callsOnHttpOutError() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                java.net.URI uri = java.net.URI.create("http://example.com/api");
+                Throwable err = new RuntimeException("connection refused");
+                HttpPlugin.RestTemplateAdvice4Args.exit(uri, fakeHttpMethod("POST"), err, 100L);
+                rt.verify(() -> TraceRuntime.onHttpOutError(eq(err), eq("POST"), eq("http://example.com/api"), anyLong()), times(1));
+            }
+        }
+
+        @Test
+        @DisplayName("RestTemplateAdvice5Args: 정상 종료 시 onHttpOut 호출")
+        void advice5Args_exit_normal_callsOnHttpOut() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                java.net.URI uri = java.net.URI.create("http://example.com/api");
+                HttpPlugin.RestTemplateAdvice5Args.exit(uri, fakeHttpMethod("PUT"), null, 100L);
+                rt.verify(() -> TraceRuntime.onHttpOut(eq("PUT"), eq("http://example.com/api"), eq(200), anyLong()), times(1));
+            }
+        }
+
+        private enum FakeHttpMethod { GET, POST, PUT }
+
+        private FakeHttpMethod fakeHttpMethod(String name) {
+            return FakeHttpMethod.valueOf(name);
         }
     }
 
+    // -----------------------------------------------------------------------
+    // StartAsyncAdvice
+    // -----------------------------------------------------------------------
+
     @Nested
-    @DisplayName("RestTemplateCreateRequestAdvice 테스트")
-    class RestTemplateCreateRequestAdviceTest {
+    @DisplayName("StartAsyncAdvice 테스트")
+    class StartAsyncAdviceTest {
 
         @Test
-        @DisplayName("createRequest 종료 시 txId/spanId 헤더 주입(injectHeadersToRequest)이 호출되어야 한다")
-        void onMethodExit_areturn_callsInjectHeadersToRequest() {
-            MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-            HttpPlugin.RestTemplateCreateRequestAdvice advice =
-                new HttpPlugin.RestTemplateCreateRequestAdvice(
-                    mv, Opcodes.ACC_PROTECTED, "createRequest",
-                    "(Ljava/net/URI;Lorg/springframework/http/HttpMethod;)Lorg/springframework/http/client/ClientHttpRequest;");
-
-            advice.onMethodExit(Opcodes.ARETURN);
-
-            verify(mv, atLeastOnce()).visitMethodInsn(
-                eq(Opcodes.INVOKESTATIC),
-                eq("org/example/agent/plugin/http/HttpPlugin"),
-                eq("injectHeadersToRequest"),
-                eq("(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/String;)V"),
-                eq(false)
-            );
+        @DisplayName("exit: registerAsyncListenerFromRequest가 호출되어야 한다")
+        void exit_callsRegisterAsyncListenerFromRequest() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                Object fakeRequest = new Object();
+                HttpPlugin.StartAsyncAdvice.exit(fakeRequest);
+                rt.verify(() -> TraceRuntime.registerAsyncListenerFromRequest(eq(fakeRequest)), times(1));
+            }
         }
     }
 }

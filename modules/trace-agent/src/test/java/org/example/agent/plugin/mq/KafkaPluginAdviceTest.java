@@ -1,134 +1,87 @@
 package org.example.agent.plugin.mq;
 
+import org.example.agent.core.TraceRuntime;
+import org.example.agent.core.TxIdHolder;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
-import org.objectweb.asm.MethodVisitor;
-import org.objectweb.asm.Opcodes;
+import org.mockito.MockedStatic;
 
 import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.*;
 
-@DisplayName("플러그인: Kafka (Advice 바이트코드 검증)")
+@DisplayName("플러그인: Kafka (@Advice 메서드 검증)")
 class KafkaPluginAdviceTest {
 
+    @BeforeEach
+    void setUp() { TxIdHolder.clear(); }
+
+    @AfterEach
+    void tearDown() { TxIdHolder.clear(); }
+
     @Test
-    @DisplayName("KafkaProducer.send 호출 시 헤더 주입 및 Produce 이벤트 발행이 호출되어야 한다")
-    void testKafkaProducerAdviceOnMethodEnter() {
-        MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-        KafkaPlugin.KafkaProducerAdvice advice = new KafkaPlugin.KafkaProducerAdvice(mv, Opcodes.ACC_PUBLIC, "send", "(Lorg/apache/kafka/clients/producer/ProducerRecord;)Ljava/util/concurrent/Future;");
+    @DisplayName("KafkaProducer.send enter: injectHeader와 onMqProduce가 호출되어야 한다")
+    void producerEnter_callsInjectHeaderAndOnMqProduce() {
+        try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class);
+             MockedStatic<KafkaPlugin> kp = mockStatic(KafkaPlugin.class, withSettings().defaultAnswer(CALLS_REAL_METHODS))) {
 
-        advice.onMethodEnter();
+            Object fakeRecord = new Object();
+            kp.when(() -> KafkaPlugin.extractTopic(any())).thenReturn("my-topic");
+            kp.when(() -> KafkaPlugin.extractKey(any())).thenReturn("key-1");
 
-        // Verify that it injects the header and emits a trace event
-        verify(mv, atLeastOnce()).visitMethodInsn(
-            eq(Opcodes.INVOKESTATIC),
-            eq("org/example/agent/plugin/mq/KafkaPlugin"),
-            eq("injectHeader"),
-            anyString(),
-            eq(false)
-        );
+            KafkaPlugin.KafkaProducerEnterAdvice.enter(fakeRecord);
 
-        verify(mv, atLeastOnce()).visitMethodInsn(
-            eq(Opcodes.INVOKESTATIC),
-            eq("org/example/agent/core/TraceRuntime"),
-            eq("onMqProduce"),
-            anyString(),
-            eq(false)
-        );
+            kp.verify(() -> KafkaPlugin.injectHeader(eq(fakeRecord), any()), times(1));
+            rt.verify(() -> TraceRuntime.onMqProduce(eq("kafka"), eq("my-topic"), eq("key-1")), times(1));
+        }
     }
 
     @Test
-    @DisplayName("MessagingMessageListenerAdapter.onMessage 진입 시 onMqConsumeStart가 호출되어야 한다")
-    void testKafkaAdapterAdviceOnMethodEnter() {
-        MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-        // Descriptor must start with ConsumerRecord to match KafkaAdapterTransformer's filter
-        String desc = "(Lorg/apache/kafka/clients/consumer/ConsumerRecord;Ljava/lang/Object;Ljava/lang/Object;)V";
-        KafkaPlugin.KafkaAdapterAdvice advice = new KafkaPlugin.KafkaAdapterAdvice(
-                mv, Opcodes.ACC_PUBLIC, "onMessage", desc);
+    @DisplayName("KafkaAdapter.onMessage enter: txId 추출 및 onMqConsumeStart 호출")
+    void adapterEnter_callsOnMqConsumeStart() {
+        try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class);
+             MockedStatic<KafkaPlugin> kp = mockStatic(KafkaPlugin.class, withSettings().defaultAnswer(CALLS_REAL_METHODS))) {
 
-        advice.onMethodEnter();
+            Object fakeRecord = new Object();
+            kp.when(() -> KafkaPlugin.extractTxId(any())).thenReturn("upstream-tx-1");
+            kp.when(() -> KafkaPlugin.extractTopic(any())).thenReturn("consume-topic");
 
-        // extractTxId → setTxIdIfPresent → extractTopic → TxIdHolder.get → onMqConsumeStart
-        verify(mv, atLeastOnce()).visitMethodInsn(
-            eq(Opcodes.INVOKESTATIC),
-            eq("org/example/agent/core/TraceRuntime"),
-            eq("onMqConsumeStart"),
-            anyString(),
-            eq(false)
-        );
+            KafkaPlugin.KafkaAdapterAdvice.enter(fakeRecord, null, 0L);
+
+            rt.verify(() -> TraceRuntime.onMqConsumeStart(eq("kafka"), eq("consume-topic"), any()), times(1));
+        }
     }
 
     @Test
-    @DisplayName("MessagingMessageListenerAdapter.onMessage 정상 종료 시 onMqConsumeComplete가 호출되어야 한다")
-    void testKafkaAdapterAdviceOnMethodExit_callsComplete() {
-        MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-        String desc = "(Lorg/apache/kafka/clients/consumer/ConsumerRecord;Ljava/lang/Object;Ljava/lang/Object;)V";
-        KafkaPlugin.KafkaAdapterAdvice advice = new KafkaPlugin.KafkaAdapterAdvice(
-            mv, Opcodes.ACC_PUBLIC, "onMessage", desc);
-
-        advice.onMethodEnter();
-        advice.onMethodExit(Opcodes.RETURN);
-
-        verify(mv, atLeastOnce()).visitMethodInsn(
-            eq(Opcodes.INVOKESTATIC),
-            eq("org/example/agent/core/TraceRuntime"),
-            eq("onMqConsumeComplete"),
-            anyString(),
-            eq(false)
-        );
+    @DisplayName("KafkaAdapter.onMessage exit: 정상 종료 → onMqConsumeComplete 호출")
+    void adapterExit_normal_callsOnMqConsumeComplete() {
+        try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+            KafkaPlugin.KafkaAdapterAdvice.exit(null, "topic-1", System.currentTimeMillis() - 100);
+            rt.verify(() -> TraceRuntime.onMqConsumeComplete(eq("kafka"), eq("topic-1"), anyLong()), times(1));
+            rt.verify(() -> TraceRuntime.onMqConsumeError(any(), any(), any(), anyLong()), never());
+        }
     }
 
     @Test
-    @DisplayName("handleException 진입 시 onMqConsumeErrorMark가 호출되어야 한다")
-    void testKafkaHandleExceptionAdvice_marksError() {
-        MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-        String desc = "(Ljava/lang/Exception;Lorg/apache/kafka/clients/consumer/ConsumerRecord;)V";
-        KafkaPlugin.KafkaHandleExceptionAdvice advice = new KafkaPlugin.KafkaHandleExceptionAdvice(
-            mv, Opcodes.ACC_PROTECTED, "handleException", desc);
-
-        advice.onMethodEnter();
-
-        verify(mv, atLeastOnce()).visitMethodInsn(
-            eq(Opcodes.INVOKESTATIC),
-            eq("org/example/agent/core/TraceRuntime"),
-            eq("onMqConsumeErrorMark"),
-            eq("(Ljava/lang/Throwable;)V"),
-            eq(false)
-        );
-        verify(mv, atLeastOnce()).visitMethodInsn(
-            eq(Opcodes.INVOKESTATIC),
-            eq("org/example/agent/core/TraceRuntime"),
-            eq("onMqConsumeComplete"),
-            eq("(Ljava/lang/String;Ljava/lang/String;J)V"),
-            eq(false)
-        );
+    @DisplayName("KafkaAdapter.onMessage exit: 예외 → onMqConsumeError 호출")
+    void adapterExit_thrown_callsOnMqConsumeError() {
+        try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+            Throwable err = new RuntimeException("consumer boom");
+            KafkaPlugin.KafkaAdapterAdvice.exit(err, "topic-2", System.currentTimeMillis() - 50);
+            rt.verify(() -> TraceRuntime.onMqConsumeError(eq(err), eq("kafka"), eq("topic-2"), anyLong()), times(1));
+            rt.verify(() -> TraceRuntime.onMqConsumeComplete(any(), any(), anyLong()), never());
+        }
     }
 
     @Test
-    @DisplayName("3.3+ handleException 시그니처에서도 onMqConsumeErrorMark가 호출되어야 한다")
-    void testKafkaHandleExceptionAdvice_v33Signature_marksError() {
-        MethodVisitor mv = Mockito.mock(MethodVisitor.class);
-        String desc = "(Ljava/lang/Object;Lorg/springframework/kafka/support/Acknowledgment;Lorg/apache/kafka/clients/consumer/Consumer;Lorg/springframework/messaging/Message;Lorg/springframework/kafka/listener/ListenerExecutionFailedException;)V";
-        KafkaPlugin.KafkaHandleExceptionAdvice advice = new KafkaPlugin.KafkaHandleExceptionAdvice(
-            mv, Opcodes.ACC_PROTECTED, "handleException", desc);
-
-        advice.onMethodEnter();
-
-        verify(mv, atLeastOnce()).visitMethodInsn(
-            eq(Opcodes.INVOKESTATIC),
-            eq("org/example/agent/core/TraceRuntime"),
-            eq("onMqConsumeErrorMark"),
-            eq("(Ljava/lang/Throwable;)V"),
-            eq(false)
-        );
-        verify(mv, atLeastOnce()).visitMethodInsn(
-            eq(Opcodes.INVOKESTATIC),
-            eq("org/example/agent/core/TraceRuntime"),
-            eq("onMqConsumeComplete"),
-            eq("(Ljava/lang/String;Ljava/lang/String;J)V"),
-            eq(false)
-        );
+    @DisplayName("KafkaHandleExceptionEnterAdvice: onMqConsumeErrorMark와 onMqConsumeComplete 호출")
+    void handleExceptionEnter_callsErrorMarkAndComplete() {
+        try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+            Throwable err = new RuntimeException("handled");
+            KafkaPlugin.KafkaHandleExceptionEnterAdvice.enter(err);
+            rt.verify(() -> TraceRuntime.onMqConsumeErrorMark(eq(err)), times(1));
+            rt.verify(() -> TraceRuntime.onMqConsumeComplete(eq("kafka"), isNull(), eq(-1L)), times(1));
+        }
     }
 }
