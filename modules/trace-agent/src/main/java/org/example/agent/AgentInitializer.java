@@ -6,9 +6,9 @@ import net.bytebuddy.dynamic.ClassFileLocator;
 import net.bytebuddy.dynamic.DynamicType;
 import net.bytebuddy.utility.JavaModule;
 import org.example.agent.config.AgentConfig;
-import org.example.agent.core.AgentLogger;
+import org.example.agent.core.util.AgentLogger;
 import org.example.agent.core.PluginRegistry;
-import org.example.agent.core.TcpSender;
+import org.example.agent.core.emitter.TcpSender;
 
 import java.io.File;
 import java.lang.instrument.Instrumentation;

@@ -1,5 +1,8 @@
 package org.example.agent.core;
 
+import org.example.agent.core.context.SpanIdHolder;
+import org.example.agent.core.context.TxIdHolder;
+import org.example.agent.core.emitter.TcpSender;
 import org.example.common.TraceCategory;
 import org.example.common.TraceEvent;
 import org.example.common.TraceEventType;

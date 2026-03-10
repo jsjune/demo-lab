@@ -1,8 +1,8 @@
 package org.example.agent.core.handler;
 
-import org.example.agent.core.SpanIdHolder;
-import org.example.agent.core.TcpSender;
-import org.example.agent.core.TxIdHolder;
+import org.example.agent.core.context.SpanIdHolder;
+import org.example.agent.core.emitter.TcpSender;
+import org.example.agent.core.context.TxIdHolder;
 import org.example.common.TraceCategory;
 import org.example.common.TraceEvent;
 import org.example.common.TraceEventType;
@@ -154,7 +154,7 @@ class DbEventHandlerTest {
     }
 
     @Test
-    @DisplayName("T-08: 중첩 DB 호출은 최상위 단일 완료 이벤트만 전송")
+    @DisplayName("T-08: 중첩 DB 호출은 최상위 단일 완료 이벤트만 전송 (inner error + outer success)")
     void nestedCalls_emitOnlyOneTopLevelEnd() {
         TxIdHolder.set("tx-001");
         SpanIdHolder.set("span-001");
@@ -169,5 +169,59 @@ class DbEventHandlerTest {
         assertEquals(TraceEventType.DB_QUERY, end.type());
         assertTrue(end.success());
         assertEquals("SELECT outer", end.extraInfo().get("sql"));
+    }
+
+    @Test
+    @DisplayName("T-09: 중첩 inner success + outer success → 외부 SQL 이벤트 1건만")
+    void nestedCalls_innerSuccess_outerSuccess_onlyOuterEventEmitted() {
+        TxIdHolder.set("tx-002");
+        SpanIdHolder.set("span-002");
+
+        DbEventHandler.onStart("SELECT outer", "db-host");
+        DbEventHandler.onStart("SELECT inner", "db-host");
+        DbEventHandler.onEnd("SELECT inner", 5L, "db-host");   // inner success — must be suppressed
+        DbEventHandler.onEnd("SELECT outer", 50L, "db-host");  // outer success — must emit
+
+        assertEquals(1, capturedEvents.size(), "Only outermost call should emit DB_QUERY");
+        TraceEvent e = capturedEvents.get(0);
+        assertTrue(e.success());
+        assertEquals("SELECT outer", e.extraInfo().get("sql"));
+        assertEquals(50L, e.durationMs());
+    }
+
+    @Test
+    @DisplayName("T-10: 다중 inner 호출 중 일부 성공/일부 오류 — 외부 성공 이벤트 1건만")
+    void multipleNestedQueries_onlyOuterEventEmitted() {
+        TxIdHolder.set("tx-003");
+        SpanIdHolder.set("span-003");
+
+        DbEventHandler.onStart("SELECT outer", "db-host");
+        DbEventHandler.onStart("SELECT inner-1", "db-host");
+        DbEventHandler.onEnd("SELECT inner-1", 3L, "db-host");          // success — suppressed
+        DbEventHandler.onStart("SELECT inner-2", "db-host");
+        DbEventHandler.onError(new RuntimeException("err"), "SELECT inner-2", 2L, "db-host"); // error — suppressed
+        DbEventHandler.onEnd("SELECT outer", 100L, "db-host");          // outer success — emitted
+
+        assertEquals(1, capturedEvents.size(), "Only outermost call should emit DB_QUERY");
+        TraceEvent e = capturedEvents.get(0);
+        assertTrue(e.success());
+        assertEquals("SELECT outer", e.extraInfo().get("sql"));
+    }
+
+    @Test
+    @DisplayName("T-11: 연속 독립 쿼리 — 각각 이벤트 1건씩 총 2건 전송")
+    void sequentialIndependentQueries_eachEmitsOneEvent() {
+        TxIdHolder.set("tx-004");
+        SpanIdHolder.set("span-004");
+
+        DbEventHandler.onStart("SELECT first", "db-host");
+        DbEventHandler.onEnd("SELECT first", 10L, "db-host");
+
+        DbEventHandler.onStart("SELECT second", "db-host");
+        DbEventHandler.onEnd("SELECT second", 20L, "db-host");
+
+        assertEquals(2, capturedEvents.size(), "Each independent query should emit its own DB_QUERY");
+        assertEquals("SELECT first", capturedEvents.get(0).extraInfo().get("sql"));
+        assertEquals("SELECT second", capturedEvents.get(1).extraInfo().get("sql"));
     }
 }

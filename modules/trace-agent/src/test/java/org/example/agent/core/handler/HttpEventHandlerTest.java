@@ -1,8 +1,8 @@
 package org.example.agent.core.handler;
 
-import org.example.agent.core.SpanIdHolder;
-import org.example.agent.core.TcpSender;
-import org.example.agent.core.TxIdHolder;
+import org.example.agent.core.context.SpanIdHolder;
+import org.example.agent.core.emitter.TcpSender;
+import org.example.agent.core.context.TxIdHolder;
 import org.example.common.TraceEvent;
 import org.example.common.TraceEventType;
 import org.junit.jupiter.api.AfterEach;
@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.junit.jupiter.api.*;
 import org.mockito.MockedStatic;
-import org.example.agent.core.TxIdGenerator;
+import org.example.agent.core.util.TxIdGenerator;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
@@ -50,6 +50,7 @@ class HttpEventHandlerTest {
         clearTraceRuntimeReflectionCaches();
         TxIdHolder.clear();
         SpanIdHolder.clear();
+        HttpEventHandler.HTTP_IN_FLIGHT_TX.remove();
     }
 
     @AfterEach
@@ -57,6 +58,7 @@ class HttpEventHandlerTest {
         tcpMock.close();
         TxIdHolder.clear();
         SpanIdHolder.clear();
+        HttpEventHandler.HTTP_IN_FLIGHT_TX.remove();
     }
 
     @Test
@@ -592,6 +594,50 @@ class HttpEventHandlerTest {
         @DisplayName("getStatusCode()가 없는 객체이면 200을 반환한다")
         void extractRestTemplateStatus_noStatusCode_returns200() {
             assertEquals(200, HttpEventHandler.extractRestTemplateStatus("plain-string"));
+        }
+    }
+
+    // ── HTTP_IN_START 중복 방지 (ThreadLocal IN_FLIGHT 플래그) ────────────
+
+    @Nested
+    @DisplayName("HTTP_IN_START 중복 방지 테스트")
+    class HttpInStartDeduplicationTest {
+
+        @Test
+        @DisplayName("T-25: 동일 스레드에서 onInStart 두 번 호출 시 두 번째는 무시됨")
+        void onInStart_calledTwice_secondCallDeduplicated() {
+            // First call — should emit HTTP_IN_START (forceTrace=true bypasses sampling)
+            HttpEventHandler.onInStart(null, "GET", "/api", null, null, true);
+            long startEventsAfterFirst = capturedEvents.stream()
+                .filter(e -> e.type() == TraceEventType.HTTP_IN_START).count();
+
+            // Second call on same thread while first is "in flight"
+            HttpEventHandler.onInStart(null, "GET", "/api/duplicate", null, null, true);
+            long startEventsAfterSecond = capturedEvents.stream()
+                .filter(e -> e.type() == TraceEventType.HTTP_IN_START).count();
+
+            assertEquals(1L, startEventsAfterFirst, "First call must emit HTTP_IN_START");
+            assertEquals(1L, startEventsAfterSecond, "Second call must be deduplicated");
+        }
+
+        @Test
+        @DisplayName("T-26: onInEnd 후 IN_FLIGHT 플래그 해제 — 다음 요청은 정상 추적됨")
+        void onInEnd_clearsInFlightFlag_nextRequestTracked() {
+            // First request lifecycle
+            HttpEventHandler.onInStart(null, "GET", "/first", null, null, true);
+            String firstTxId = org.example.agent.core.context.TxIdHolder.get();
+            HttpEventHandler.onInEnd("GET", "/first", 200, 10L);
+
+            long startAfterFirst = capturedEvents.stream()
+                .filter(e -> e.type() == TraceEventType.HTTP_IN_START).count();
+
+            // Second request on same thread — flag must be cleared by onInEnd
+            HttpEventHandler.onInStart(null, "GET", "/second", null, null, true);
+            long startAfterSecond = capturedEvents.stream()
+                .filter(e -> e.type() == TraceEventType.HTTP_IN_START).count();
+
+            assertEquals(1L, startAfterFirst, "First request: exactly one HTTP_IN_START");
+            assertEquals(2L, startAfterSecond, "Second request: another HTTP_IN_START after flag cleared");
         }
     }
 }

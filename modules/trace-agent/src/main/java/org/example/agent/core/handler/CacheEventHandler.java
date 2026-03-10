@@ -1,8 +1,9 @@
 package org.example.agent.core.handler;
 
-import org.example.agent.core.AgentLogger;
+import org.example.agent.core.util.AgentLogger;
 import org.example.agent.core.TraceRuntime;
-import org.example.agent.core.TxIdHolder;
+import org.example.agent.core.context.SpanIdHolder;
+import org.example.agent.core.context.TxIdHolder;
 import org.example.common.TraceCategory;
 import org.example.common.TraceEventType;
 
@@ -82,7 +83,7 @@ public final class CacheEventHandler {
     private static void attachCompletionListener(Object futureLike, String operation, String key, boolean classifyHitMiss) {
         if (futureLike == null) return;
         String capturedTxId = TxIdHolder.get();
-        String capturedSpanId = org.example.agent.core.SpanIdHolder.get();
+        String capturedSpanId = SpanIdHolder.get();
         if (capturedTxId == null) return;
         AgentLogger.debug("[TRACE][CACHE][FLOW] attachCompletionListener txId=" + capturedTxId
             + " op=" + operation + " key=" + key + " classifyHitMiss=" + classifyHitMiss
@@ -94,10 +95,10 @@ public final class CacheEventHandler {
 
             BiConsumer<Object, Throwable> callback = (result, error) -> {
                 String prevTx = TxIdHolder.get();
-                String prevSpan = org.example.agent.core.SpanIdHolder.get();
+                String prevSpan = SpanIdHolder.get();
                 try {
                     TxIdHolder.set(capturedTxId);
-                    org.example.agent.core.SpanIdHolder.set(capturedSpanId);
+                    SpanIdHolder.set(capturedSpanId);
                     if (error != null) {
                         AgentLogger.debug("[TRACE][CACHE][FLOW] completion error op=" + operation
                             + " key=" + key + " errorType=" + error.getClass().getSimpleName()
@@ -116,7 +117,7 @@ public final class CacheEventHandler {
                     }
                 } finally {
                     if (prevTx == null) TxIdHolder.clear(); else TxIdHolder.set(prevTx);
-                    if (prevSpan == null) org.example.agent.core.SpanIdHolder.clear(); else org.example.agent.core.SpanIdHolder.set(prevSpan);
+                    if (prevSpan == null) SpanIdHolder.clear(); else SpanIdHolder.set(prevSpan);
                 }
             };
             whenComplete.invoke(futureLike, callback);

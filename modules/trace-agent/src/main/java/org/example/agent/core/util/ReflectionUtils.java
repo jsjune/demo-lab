@@ -1,4 +1,4 @@
-package org.example.agent.plugin;
+package org.example.agent.core.util;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -6,7 +6,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Reflection helpers shared by all plugins.
+ * Reflection helpers shared by all plugins and core handlers.
  * Fields and methods are cached per class to avoid repeated lookups.
  */
 public class ReflectionUtils {

@@ -1,5 +1,8 @@
 package org.example.agent.core;
 
+import org.example.agent.core.context.SpanIdHolder;
+import org.example.agent.core.context.TxIdHolder;
+import org.example.agent.core.util.AgentLogger;
 import java.util.concurrent.Callable;
 
 /**

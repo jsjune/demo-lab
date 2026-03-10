@@ -1,4 +1,4 @@
-package org.example.agent.core;
+package org.example.agent.core.emitter;
 
 import org.example.common.TraceEvent;
 import org.junit.jupiter.api.DisplayName;

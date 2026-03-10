@@ -1,10 +1,11 @@
 package org.example.agent.plugin.mq;
 
 import org.example.agent.core.TraceRuntime;
-import org.example.agent.core.TxIdHolder;
+import org.example.agent.core.context.TxIdHolder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 
@@ -19,6 +20,57 @@ class KafkaPluginAdviceTest {
 
     @AfterEach
     void tearDown() { TxIdHolder.clear(); }
+
+    // -----------------------------------------------------------------------
+    // KafkaPollAdvice (pure KafkaConsumer.poll() support)
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("KafkaPollAdvice 테스트")
+    class KafkaPollAdviceTest {
+
+        @Test
+        @DisplayName("exit: records > 0 이면 onMqConsumeStart + onMqConsumeComplete 호출")
+        void pollExit_withRecords_callsConsumeEvents() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class);
+                 MockedStatic<KafkaPlugin> kp = mockStatic(KafkaPlugin.class,
+                         withSettings().defaultAnswer(CALLS_REAL_METHODS))) {
+
+                kp.when(() -> KafkaPlugin.getRecordsCount(any())).thenReturn(3);
+                kp.when(() -> KafkaPlugin.getFirstTopic(any())).thenReturn("raw-topic");
+
+                KafkaPlugin.KafkaPollAdvice.exit(new Object(), null, 100L);
+
+                rt.verify(() -> TraceRuntime.onMqConsumeStart(eq("kafka"), eq("raw-topic"), any()), times(1));
+                rt.verify(() -> TraceRuntime.onMqConsumeComplete(eq("kafka"), eq("raw-topic"), anyLong()), times(1));
+            }
+        }
+
+        @Test
+        @DisplayName("exit: records == 0 이면 이벤트 미발생")
+        void pollExit_emptyRecords_noEvents() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class);
+                 MockedStatic<KafkaPlugin> kp = mockStatic(KafkaPlugin.class,
+                         withSettings().defaultAnswer(CALLS_REAL_METHODS))) {
+
+                kp.when(() -> KafkaPlugin.getRecordsCount(any())).thenReturn(0);
+
+                KafkaPlugin.KafkaPollAdvice.exit(new Object(), null, 100L);
+
+                rt.verify(() -> TraceRuntime.onMqConsumeStart(any(), any(), any()), never());
+                rt.verify(() -> TraceRuntime.onMqConsumeComplete(any(), any(), anyLong()), never());
+            }
+        }
+
+        @Test
+        @DisplayName("exit: thrown != null 이면 이벤트 미발생")
+        void pollExit_thrown_noEvents() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                KafkaPlugin.KafkaPollAdvice.exit(null, new RuntimeException("poll err"), 100L);
+                rt.verify(() -> TraceRuntime.onMqConsumeStart(any(), any(), any()), never());
+            }
+        }
+    }
 
     @Test
     @DisplayName("KafkaProducer.send enter: injectHeader와 onMqProduce가 호출되어야 한다")

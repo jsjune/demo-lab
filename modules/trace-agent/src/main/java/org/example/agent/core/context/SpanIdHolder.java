@@ -1,4 +1,4 @@
-package org.example.agent.core;
+package org.example.agent.core.context;
 
 /**
  * ThreadLocal holder for the current root span ID.

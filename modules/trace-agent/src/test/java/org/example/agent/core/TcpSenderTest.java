@@ -1,5 +1,6 @@
 package org.example.agent.core;
 
+import org.example.agent.core.emitter.TcpSender;
 import org.example.agent.config.AgentConfig;
 import org.example.agent.testutil.TestStateGuard;
 import org.example.agent.testutil.TcpSenderTestSupport;

@@ -1,5 +1,9 @@
 package org.example.agent.core;
 
+import org.example.agent.core.context.SpanIdHolder;
+import org.example.agent.core.context.TxIdHolder;
+import org.example.agent.core.util.AgentLogger;
+
 /**
  * Wraps a {@link Runnable} to capture and restore trace context.
  * Enhanced with lifecycle logging and ASYNC event recording.

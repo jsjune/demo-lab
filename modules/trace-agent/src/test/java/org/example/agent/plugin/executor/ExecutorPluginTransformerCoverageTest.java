@@ -1,5 +1,6 @@
 package org.example.agent.plugin.executor;
 
+import org.example.agent.core.ContextCapturingCallable;
 import org.example.agent.core.ContextCapturingRunnable;
 import org.example.agent.core.TraceRuntime;
 import org.example.agent.instrumentation.ByteBuddyIntegrationTest;
@@ -44,6 +45,26 @@ class ExecutorPluginTransformerCoverageTest extends ByteBuddyIntegrationTest {
     }
 
     @Test
+    void callableWrappingAdvice_wrapsCallableBeforeMethodBody() throws Exception {
+        Class<?> cls = instrument(
+            DummySubmitter.class,
+            ExecutorPlugin.CallableWrappingAdvice.class,
+            named("submit").and(takesArgument(0, java.util.concurrent.Callable.class)));
+
+        Object instance = cls.getDeclaredConstructor().newInstance();
+        Method submit = cls.getDeclaredMethod("submit", java.util.concurrent.Callable.class);
+
+        java.util.concurrent.Callable<String> original = () -> "result";
+        submit.invoke(instance, original);
+
+        Field captured = cls.getDeclaredField("captured");
+        captured.setAccessible(true);
+        Object capturedCallable = captured.get(instance);
+
+        assertInstanceOf(ContextCapturingCallable.class, capturedCallable);
+    }
+
+    @Test
     void asyncErrorAdvice_callsOnAsyncError() {
         try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
             Throwable err = new RuntimeException("async fail");
@@ -59,5 +80,10 @@ class ExecutorPluginTransformerCoverageTest extends ByteBuddyIntegrationTest {
     public static class DummyExecutor {
         public Runnable captured;
         public void execute(Runnable r) { this.captured = r; }
+    }
+
+    public static class DummySubmitter {
+        public java.util.concurrent.Callable<?> captured;
+        public <T> void submit(java.util.concurrent.Callable<T> c) { this.captured = c; }
     }
 }

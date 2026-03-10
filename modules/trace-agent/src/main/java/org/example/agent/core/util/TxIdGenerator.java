@@ -1,4 +1,4 @@
-package org.example.agent.core;
+package org.example.agent.core.util;
 
 import org.example.agent.config.AgentConfig;
 

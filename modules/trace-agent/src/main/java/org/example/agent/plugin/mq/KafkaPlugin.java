@@ -6,13 +6,14 @@ import net.bytebuddy.dynamic.ClassFileLocator;
 import org.example.agent.AgentInitializer;
 import org.example.agent.TracerPlugin;
 import org.example.agent.config.AgentConfig;
-import org.example.agent.core.AgentLogger;
-import org.example.agent.core.SpanIdHolder;
+import org.example.agent.core.util.AgentLogger;
+import org.example.agent.core.context.SpanIdHolder;
 import org.example.agent.core.TraceRuntime;
-import org.example.agent.core.TxIdHolder;
-import org.example.agent.plugin.ReflectionUtils;
+import org.example.agent.core.context.TxIdHolder;
+import org.example.agent.core.util.ReflectionUtils;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Set;
 
 import static net.bytebuddy.matcher.ElementMatchers.*;
 
@@ -60,6 +61,32 @@ public class KafkaPlugin implements TracerPlugin {
     // -----------------------------------------------------------------------
     // Advice classes
     // -----------------------------------------------------------------------
+
+    /**
+     * Intercepts KafkaConsumer.poll() for pure (non-Spring) consumer loop support.
+     * Emits MQ_CONSUME_START + MQ_CONSUME_END per poll batch when records are returned.
+     */
+    public static class KafkaPollAdvice {
+
+        @Advice.OnMethodEnter
+        static void enter(@Advice.Local("startTime") long startTime) {
+            startTime = System.currentTimeMillis();
+        }
+
+        @Advice.OnMethodExit(onThrowable = Throwable.class)
+        static void exit(
+            @Advice.Return Object records,
+            @Advice.Thrown Throwable thrown,
+            @Advice.Local("startTime") long startTime
+        ) {
+            if (thrown != null) return;
+            if (KafkaPlugin.getRecordsCount(records) == 0) return;
+            long durationMs = System.currentTimeMillis() - startTime;
+            String topic = KafkaPlugin.getFirstTopic(records);
+            TraceRuntime.onMqConsumeStart("kafka", topic, TxIdHolder.get());
+            TraceRuntime.onMqConsumeComplete("kafka", topic, durationMs);
+        }
+    }
 
     /** Injects txId header into ProducerRecord and records produce event. */
     public static class KafkaProducerEnterAdvice {
@@ -119,6 +146,28 @@ public class KafkaPlugin implements TracerPlugin {
     // -----------------------------------------------------------------------
     // Static helpers — called from injected bytecode or tests
     // -----------------------------------------------------------------------
+
+    /** Returns the total number of records in a ConsumerRecords batch (0 if null/empty). */
+    @SuppressWarnings("unchecked")
+    public static int getRecordsCount(Object records) {
+        if (records == null) return 0;
+        return ReflectionUtils.invokeMethod(records, "count")
+            .filter(v -> v instanceof Integer)
+            .map(v -> (Integer) v)
+            .orElse(0);
+    }
+
+    /** Returns the first topic name from a ConsumerRecords batch, or null if unavailable. */
+    @SuppressWarnings("unchecked")
+    public static String getFirstTopic(Object records) {
+        if (records == null) return null;
+        return ReflectionUtils.invokeMethod(records, "topics")
+            .filter(v -> v instanceof Set)
+            .map(v -> (Set<?>) v)
+            .flatMap(set -> set.stream().findFirst())
+            .map(Object::toString)
+            .orElse(null);
+    }
 
     /** Sets TxIdHolder only when txId is non-null/non-empty to avoid erasing existing txId. */
     public static void setTxIdIfPresent(String txId) {

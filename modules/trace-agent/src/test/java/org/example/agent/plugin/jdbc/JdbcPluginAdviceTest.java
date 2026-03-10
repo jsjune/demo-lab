@@ -2,6 +2,7 @@ package org.example.agent.plugin.jdbc;
 
 import org.example.agent.core.TraceRuntime;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 
@@ -10,6 +11,10 @@ import static org.mockito.Mockito.*;
 
 @DisplayName("플러그인: JDBC (@Advice 메서드 검증)")
 class JdbcPluginAdviceTest {
+
+    // -----------------------------------------------------------------------
+    // JdbcStatementAdvice
+    // -----------------------------------------------------------------------
 
     @Test
     @DisplayName("enter: onDbQueryStart가 호출되어야 한다")

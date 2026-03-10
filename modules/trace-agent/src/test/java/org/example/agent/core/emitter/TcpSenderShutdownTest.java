@@ -1,8 +1,8 @@
-package org.example.agent.core;
+package org.example.agent.core.emitter;
 
 import org.example.agent.config.AgentConfig;
-import org.example.agent.testutil.TestStateGuard;
 import org.example.agent.testutil.TcpSenderTestSupport;
+import org.example.agent.testutil.TestStateGuard;
 import org.example.common.TraceCategory;
 import org.example.common.TraceEvent;
 import org.example.common.TraceEventType;

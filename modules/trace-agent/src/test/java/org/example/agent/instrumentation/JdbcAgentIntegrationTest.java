@@ -2,7 +2,7 @@ package org.example.agent.instrumentation;
 
 import org.example.agent.core.TraceIgnore;
 import org.example.agent.core.TraceRuntime;
-import org.example.agent.core.TxIdHolder;
+import org.example.agent.core.context.TxIdHolder;
 import org.example.agent.plugin.jdbc.JdbcPlugin;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

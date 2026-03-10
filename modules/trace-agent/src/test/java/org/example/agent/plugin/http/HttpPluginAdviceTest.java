@@ -1,10 +1,10 @@
 package org.example.agent.plugin.http;
 
 import org.example.agent.config.AgentConfig;
-import org.example.agent.core.SpanIdHolder;
-import org.example.agent.core.TcpSenderEmitter;
+import org.example.agent.core.context.SpanIdHolder;
+import org.example.agent.core.emitter.TcpSenderEmitter;
 import org.example.agent.core.TraceRuntime;
-import org.example.agent.core.TxIdHolder;
+import org.example.agent.core.context.TxIdHolder;
 import org.example.common.TraceEvent;
 
 import java.util.ArrayList;
@@ -154,6 +154,7 @@ class HttpPluginAdviceTest {
         @DisplayName("RestTemplateAdvice4Args: 정상 종료 시 onHttpOut 호출 (returnValue=null → 200)")
         void advice4Args_exit_normal_callsOnHttpOut() {
             try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                rt.when(() -> TraceRuntime.extractHttpStatus(isNull())).thenReturn(200);
                 java.net.URI uri = java.net.URI.create("http://example.com/api");
                 HttpPlugin.RestTemplateAdvice4Args.exit(uri, fakeHttpMethod("GET"), null, null, 100L);
                 rt.verify(() -> TraceRuntime.onHttpOut(eq("GET"), eq("http://example.com/api"), eq(200), anyLong()), times(1));
@@ -193,6 +194,7 @@ class HttpPluginAdviceTest {
         @DisplayName("RestTemplateAdvice5Args: 정상 종료 시 onHttpOut 호출 (returnValue=null → 200)")
         void advice5Args_exit_normal_callsOnHttpOut() {
             try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                rt.when(() -> TraceRuntime.extractHttpStatus(isNull())).thenReturn(200);
                 java.net.URI uri = java.net.URI.create("http://example.com/api");
                 HttpPlugin.RestTemplateAdvice5Args.exit(uri, fakeHttpMethod("PUT"), null, null, 100L);
                 rt.verify(() -> TraceRuntime.onHttpOut(eq("PUT"), eq("http://example.com/api"), eq(200), anyLong()), times(1));

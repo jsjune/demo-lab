@@ -40,6 +40,8 @@ out/
 .gemini
 GEMINI.md
 CLAUDE.md
+AGENTS.md
 docs
 logs
 data
+.*

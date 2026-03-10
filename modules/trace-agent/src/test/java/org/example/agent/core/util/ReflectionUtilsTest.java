@@ -1,4 +1,4 @@
-package org.example.agent.plugin;
+package org.example.agent.core.util;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -7,7 +7,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@DisplayName("유틸리티: ReflectionUtils (리플렉션 도구)")
+@DisplayName("유틸리티: ReflectionUtils (core.util 이동 후)")
 class ReflectionUtilsTest {
 
     @Test
@@ -15,7 +15,7 @@ class ReflectionUtilsTest {
     void testGetFieldValue() {
         DummyTarget target = new DummyTarget("secret-value");
         Optional<Object> value = ReflectionUtils.getFieldValue(target, "secretField");
-        
+
         assertTrue(value.isPresent());
         assertEquals("secret-value", value.get());
     }
@@ -25,7 +25,7 @@ class ReflectionUtilsTest {
     void testGetFieldValueMissing() {
         DummyTarget target = new DummyTarget("value");
         Optional<Object> value = ReflectionUtils.getFieldValue(target, "nonExistentField");
-        
+
         assertFalse(value.isPresent());
     }
 
@@ -34,7 +34,7 @@ class ReflectionUtilsTest {
     void testInvokeMethodNoArgs() {
         DummyTarget target = new DummyTarget("value");
         Optional<Object> result = ReflectionUtils.invokeMethod(target, "publicMethod");
-        
+
         assertTrue(result.isPresent());
         assertEquals("invoked", result.get());
     }
@@ -44,7 +44,7 @@ class ReflectionUtilsTest {
     void testInvokeMethodWithArgs() {
         DummyTarget target = new DummyTarget("value");
         Optional<Object> result = ReflectionUtils.invokeMethod(target, "methodWithArg", "hello");
-        
+
         assertTrue(result.isPresent());
         assertEquals("hello-processed", result.get());
     }
@@ -54,7 +54,7 @@ class ReflectionUtilsTest {
     void testInvokeMethodMissing() {
         DummyTarget target = new DummyTarget("value");
         Optional<Object> result = ReflectionUtils.invokeMethod(target, "nonExistentMethod");
-        
+
         assertFalse(result.isPresent());
     }
 

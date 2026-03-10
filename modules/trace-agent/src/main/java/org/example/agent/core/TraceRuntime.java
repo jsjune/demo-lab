@@ -1,6 +1,11 @@
 package org.example.agent.core;
 
 import org.example.agent.config.AgentConfig;
+import org.example.agent.core.context.SpanIdHolder;
+import org.example.agent.core.context.TxIdHolder;
+import org.example.agent.core.emitter.EventEmitter;
+import org.example.agent.core.emitter.TcpSenderEmitter;
+import org.example.agent.core.util.AgentLogger;
 import org.example.agent.core.handler.AsyncEventHandler;
 import org.example.agent.core.handler.CacheEventHandler;
 import org.example.agent.core.handler.DbEventHandler;
@@ -42,7 +47,13 @@ public class TraceRuntime {
     /** Test hook: replaces the active emitter. Production code uses the default {@link TcpSenderEmitter}. */
     public static void setEmitter(EventEmitter emitter) { EMITTER = emitter; }
 
-    /** Forwards the event to the active {@link EventEmitter}. Called from handler {@code safeRun()} blocks. */
+    /**
+     * Forwards the event to the active {@link EventEmitter}. Pure pass-through — no central deduplication.
+     * <p>Design decision: event-type latching is intentionally delegated to each *EventHandler:
+     * {@code HttpEventHandler} (HTTP_IN_FLIGHT_TX), {@code DbEventHandler} (DB_CALL_DEPTH),
+     * {@code MqEventHandler} (CONSUME_FINISHED). Central latching here would prevent valid
+     * multi-emission patterns such as sequential DB_QUERY or HTTP_OUT events.
+     */
     public static void emitEvent(TraceEvent event) { EMITTER.emit(event); }
 
     // ── Lifecycle (위임 없이 유지) ─────────────────────────────────────────
@@ -110,6 +121,10 @@ public class TraceRuntime {
     public static String onAsyncStart(String task)                                         { return AsyncEventHandler.onStart(task); }
     public static void   onAsyncError(Throwable t)                                          { AsyncEventHandler.onError(t); }
     public static void   onAsyncEnd(String task, String sid, long ms)                      { AsyncEventHandler.onEnd(task, sid, ms); }
+
+    // ── ABI: HTTP utility (status extraction forwarded through ABI) ───────
+    /** Extracts HTTP status code from a RestTemplate ResponseEntity-like return value via reflection. */
+    public static int extractHttpStatus(Object returnValue)                                { return HttpEventHandler.extractRestTemplateStatus(returnValue); }
 
     // ── ABI: Reflection utilities ─────────────────────────────────────────
     public static Object invokeGetAttribute(Object target, String name) {

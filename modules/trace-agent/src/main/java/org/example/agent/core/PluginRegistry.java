@@ -1,5 +1,6 @@
 package org.example.agent.core;
 
+import org.example.agent.core.util.AgentLogger;
 import net.bytebuddy.agent.builder.AgentBuilder;
 import org.example.agent.TracerPlugin;
 

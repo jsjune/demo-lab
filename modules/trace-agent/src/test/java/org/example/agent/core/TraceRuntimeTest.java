@@ -1,5 +1,9 @@
 package org.example.agent.core;
 
+import org.example.agent.core.context.SpanIdHolder;
+import org.example.agent.core.context.TxIdHolder;
+import org.example.agent.core.emitter.TcpSender;
+import org.example.agent.core.emitter.TcpSenderEmitter;
 import org.example.common.TraceCategory;
 import org.example.common.TraceEvent;
 import org.example.common.TraceEventType;
@@ -348,6 +352,61 @@ class TraceRuntimeTest {
             TraceRuntime.emit(TraceEventType.HTTP_OUT, TraceCategory.HTTP, "/test", 5L, true, null);
             assertEquals(1, captured.size());
             assertEquals("tx-emitter", captured.get(0).txId());
+        }
+    }
+
+    /**
+     * Design-decision contract: emitEvent is a pure pass-through.
+     * Central Latching in TraceRuntime is intentionally NOT applied because:
+     *  - DB_QUERY, HTTP_OUT, and MQ_PRODUCE are validly emitted multiple times per request
+     *  - Handler-level guards (HTTP_IN_FLIGHT_TX, DB_CALL_DEPTH, CONSUME_FINISHED) own deduplication
+     */
+    @Nested
+    @DisplayName("emitEvent 패스스루 계약 (중앙 Latching 없음)")
+    class EmitEventPassThroughContractTest {
+
+        private final List<TraceEvent> captured = new ArrayList<>();
+
+        @BeforeEach
+        void setUpEmitter() {
+            TraceRuntime.setEmitter(e -> captured.add(e));
+        }
+
+        @AfterEach
+        void restoreEmitter() {
+            TraceRuntime.setEmitter(new TcpSenderEmitter());
+        }
+
+        @Test
+        @DisplayName("CT-01: 동일 타입 이벤트를 2회 emitEvent → 2건 모두 emitter에 전달 (중앙 필터 없음)")
+        void emitEvent_sameTypeTwice_bothForwarded() {
+            TraceEvent e1 = TraceRuntime.buildEvent("tx-1", TraceEventType.DB_QUERY, TraceCategory.DB,
+                    "db-host", 10L, true, null, "span-1", null);
+            TraceEvent e2 = TraceRuntime.buildEvent("tx-1", TraceEventType.DB_QUERY, TraceCategory.DB,
+                    "db-host", 20L, true, null, "span-2", null);
+
+            TraceRuntime.emitEvent(e1);
+            TraceRuntime.emitEvent(e2);
+
+            assertEquals(2, captured.size(), "emitEvent must forward all events; dedup is handler responsibility");
+            assertEquals(10L, captured.get(0).durationMs());
+            assertEquals(20L, captured.get(1).durationMs());
+        }
+
+        @Test
+        @DisplayName("CT-02: 서로 다른 타입 이벤트 → 각 1건씩 전달")
+        void emitEvent_differentTypes_allForwarded() {
+            TraceEvent http = TraceRuntime.buildEvent("tx-2", TraceEventType.HTTP_IN_START, TraceCategory.HTTP,
+                    "/api", null, true, null, "span-a", null);
+            TraceEvent db = TraceRuntime.buildEvent("tx-2", TraceEventType.DB_QUERY, TraceCategory.DB,
+                    "db-host", 5L, true, null, "span-b", "span-a");
+
+            TraceRuntime.emitEvent(http);
+            TraceRuntime.emitEvent(db);
+
+            assertEquals(2, captured.size());
+            assertEquals(TraceEventType.HTTP_IN_START, captured.get(0).type());
+            assertEquals(TraceEventType.DB_QUERY, captured.get(1).type());
         }
     }
 }

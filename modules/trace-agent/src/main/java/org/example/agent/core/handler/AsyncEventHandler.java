@@ -1,9 +1,9 @@
 package org.example.agent.core.handler;
 
-import org.example.agent.core.AgentLogger;
-import org.example.agent.core.SpanIdHolder;
+import org.example.agent.core.util.AgentLogger;
+import org.example.agent.core.context.SpanIdHolder;
 import org.example.agent.core.TraceRuntime;
-import org.example.agent.core.TxIdHolder;
+import org.example.agent.core.context.TxIdHolder;
 import org.example.common.TraceCategory;
 import org.example.common.TraceEventType;
 

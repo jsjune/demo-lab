@@ -1,7 +1,7 @@
 package org.example.agent.plugin.mq;
 
 import org.example.agent.config.AgentConfig;
-import org.example.agent.core.TxIdHolder;
+import org.example.agent.core.context.TxIdHolder;
 import org.example.agent.testutil.TestStateGuard;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

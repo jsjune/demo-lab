@@ -1,12 +1,12 @@
 package org.example.agent.core.handler;
 
 import org.example.agent.config.AgentConfig;
-import org.example.agent.core.AgentLogger;
-import org.example.agent.core.ReactorContextHolder;
-import org.example.agent.core.SpanIdHolder;
+import org.example.agent.core.util.AgentLogger;
+import org.example.agent.core.context.ReactorContextHolder;
+import org.example.agent.core.context.SpanIdHolder;
 import org.example.agent.core.TraceRuntime;
-import org.example.agent.core.TxIdGenerator;
-import org.example.agent.core.TxIdHolder;
+import org.example.agent.core.util.TxIdGenerator;
+import org.example.agent.core.context.TxIdHolder;
 import org.example.common.TraceCategory;
 import org.example.common.TraceEventType;
 
@@ -19,6 +19,13 @@ import java.util.function.Consumer;
 public final class HttpEventHandler {
 
     private HttpEventHandler() {}
+
+    /**
+     * ThreadLocal guard: stores the txId that has an in-flight HTTP_IN_START.
+     * Self-healing: if TxIdHolder is cleared between requests, a stale stored txId
+     * won't match the new null/different TxIdHolder and the guard is auto-cleared.
+     */
+    static final ThreadLocal<String> HTTP_IN_FLIGHT_TX = new ThreadLocal<>();
 
     // ── HTTP request attribute keys ────────────────────────────────────────
     static final String HTTP_ATTR_START_TIME       = "__TRACE_START_TIME__";
@@ -44,6 +51,12 @@ public final class HttpEventHandler {
 
     public static void onInStart(Object request, String method, String path,
                           String incomingTxId, String incomingSpanId, boolean forceTrace) {
+        String inFlightTx = HTTP_IN_FLIGHT_TX.get();
+        if (inFlightTx != null) {
+            String currentTx = TxIdHolder.get();
+            if (inFlightTx.equals(currentTx)) return;  // duplicate call — same tx in flight
+            HTTP_IN_FLIGHT_TX.remove();                  // stale flag from a previous request
+        }
         TraceRuntime.safeRun(() -> {
             long now = System.currentTimeMillis();
             if (request != null) {
@@ -83,6 +96,7 @@ public final class HttpEventHandler {
                     TraceRuntime.invokeSetAttribute(request, TraceRuntime.ATTR_SPAN_ID, spanId);
                 }
 
+                HTTP_IN_FLIGHT_TX.set(txId);
                 AgentLogger.debug("[RUNTIME] Transaction Started: " + method + " " + path + " (txId=" + txId + ")");
                 AgentLogger.debug("[TRACE][HTTP][HTTP_IN_START] txId=" + txId
                     + " method=" + method + " path=" + path
@@ -105,7 +119,7 @@ public final class HttpEventHandler {
                 + " durationMs=" + durationMs + " success=" + success);
             TraceRuntime.emitEvent(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
                     method + " " + path, durationMs, success, extra, spanId, null));
-            TxIdHolder.clear(); SpanIdHolder.clear();
+            HTTP_IN_FLIGHT_TX.remove(); TxIdHolder.clear(); SpanIdHolder.clear();
         });
     }
 
@@ -184,7 +198,7 @@ public final class HttpEventHandler {
                 + " errorMessage=" + extra.get("errorMessage"));
             TraceRuntime.emitEvent(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
                     method + " " + path, durationMs, false, extra, spanId, null));
-            TxIdHolder.clear(); SpanIdHolder.clear();
+            HTTP_IN_FLIGHT_TX.remove(); TxIdHolder.clear(); SpanIdHolder.clear();
         });
     }
 
@@ -367,7 +381,7 @@ public final class HttpEventHandler {
         } catch (Throwable t) { return mono; }
     }
 
-    public static void onWfSyncError() { TxIdHolder.clear(); SpanIdHolder.clear(); }
+    public static void onWfSyncError() { HTTP_IN_FLIGHT_TX.remove(); TxIdHolder.clear(); SpanIdHolder.clear(); }
 
     // ── Private helpers ───────────────────────────────────────────────────
 
@@ -384,7 +398,7 @@ public final class HttpEventHandler {
             }
             TraceRuntime.emitEvent(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_IN_END, TraceCategory.HTTP,
                     mp[0] + " " + mp[mp.length > 1 ? 1 : 0], durationMs, success, extra, spanId, null));
-            TxIdHolder.clear(); SpanIdHolder.clear();
+            HTTP_IN_FLIGHT_TX.remove(); TxIdHolder.clear(); SpanIdHolder.clear();
         });
     }
 

@@ -1,5 +1,6 @@
 package org.example.agent.core;
 
+import org.example.agent.core.util.TxIdGenerator;
 import org.example.agent.config.AgentConfig;
 import org.example.agent.testutil.TestStateGuard;
 import org.junit.jupiter.api.AfterEach;

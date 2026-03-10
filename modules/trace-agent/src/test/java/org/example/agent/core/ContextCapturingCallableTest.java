@@ -1,5 +1,8 @@
 package org.example.agent.core;
 
+import org.example.agent.core.context.SpanIdHolder;
+import org.example.agent.core.context.TxIdHolder;
+import org.example.agent.core.emitter.TcpSender;
 import org.junit.jupiter.api.*;
 import org.mockito.MockedStatic;
 

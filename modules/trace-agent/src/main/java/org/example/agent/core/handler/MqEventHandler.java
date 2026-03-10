@@ -1,10 +1,10 @@
 package org.example.agent.core.handler;
 
-import org.example.agent.core.AgentLogger;
-import org.example.agent.core.SpanIdHolder;
+import org.example.agent.core.util.AgentLogger;
+import org.example.agent.core.context.SpanIdHolder;
 import org.example.agent.core.TraceRuntime;
-import org.example.agent.core.TxIdGenerator;
-import org.example.agent.core.TxIdHolder;
+import org.example.agent.core.util.TxIdGenerator;
+import org.example.agent.core.context.TxIdHolder;
 import org.example.common.TraceCategory;
 import org.example.common.TraceEventType;
 
@@ -127,5 +127,13 @@ public final class MqEventHandler {
         CONSUME_TOPIC.remove();
         TxIdHolder.clear();
         SpanIdHolder.clear();
+    }
+
+    /** Test-only reset — clears all ThreadLocals including CONSUME_FINISHED. */
+    static void resetForTest() {
+        CONSUME_FINISHED.remove();
+        CONSUME_ERROR.remove();
+        CONSUME_START_MS.remove();
+        CONSUME_TOPIC.remove();
     }
 }

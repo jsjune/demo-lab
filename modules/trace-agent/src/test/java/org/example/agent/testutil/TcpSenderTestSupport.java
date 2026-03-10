@@ -1,6 +1,6 @@
 package org.example.agent.testutil;
 
-import org.example.agent.core.TcpSender;
+import org.example.agent.core.emitter.TcpSender;
 import org.example.common.TraceEvent;
 
 import java.lang.reflect.Field;

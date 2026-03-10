@@ -1,5 +1,6 @@
-package org.example.agent.core;
+package org.example.agent.core.emitter;
 
+import org.example.agent.core.util.AgentLogger;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.example.agent.config.AgentConfig;
 import org.example.common.TraceEvent;

@@ -1,4 +1,4 @@
-package org.example.agent.core;
+package org.example.agent.core.context;
 
 /**
  * Reactor Context key constants for trace propagation.

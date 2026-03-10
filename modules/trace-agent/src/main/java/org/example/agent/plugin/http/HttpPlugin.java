@@ -7,11 +7,11 @@ import net.bytebuddy.implementation.bytecode.assign.Assigner;
 import org.example.agent.AgentInitializer;
 import org.example.agent.TracerPlugin;
 import org.example.agent.config.AgentConfig;
-import org.example.agent.core.AgentLogger;
-import org.example.agent.core.SpanIdHolder;
+import org.example.agent.core.util.AgentLogger;
+import org.example.agent.core.context.SpanIdHolder;
 import org.example.agent.core.TraceRuntime;
-import org.example.agent.core.TxIdHolder;
-import org.example.agent.plugin.ReflectionUtils;
+import org.example.agent.core.context.TxIdHolder;
+import org.example.agent.core.util.ReflectionUtils;
 
 import static net.bytebuddy.matcher.ElementMatchers.*;
 
@@ -220,7 +220,7 @@ public class HttpPlugin implements TracerPlugin {
                 TraceRuntime.onHttpOutError(thrown, method, uri.toString(), durationMs);
             } else {
                 TraceRuntime.onHttpOut(method, uri.toString(),
-                    org.example.agent.core.handler.HttpEventHandler.extractRestTemplateStatus(returnValue), durationMs);
+                    TraceRuntime.extractHttpStatus(returnValue), durationMs);
             }
         }
     }
@@ -252,7 +252,7 @@ public class HttpPlugin implements TracerPlugin {
                 TraceRuntime.onHttpOutError(thrown, method, uri.toString(), durationMs);
             } else {
                 TraceRuntime.onHttpOut(method, uri.toString(),
-                    org.example.agent.core.handler.HttpEventHandler.extractRestTemplateStatus(returnValue), durationMs);
+                    TraceRuntime.extractHttpStatus(returnValue), durationMs);
             }
         }
     }

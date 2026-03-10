@@ -5,10 +5,9 @@ import net.bytebuddy.asm.Advice;
 import net.bytebuddy.dynamic.ClassFileLocator;
 import org.example.agent.AgentInitializer;
 import org.example.agent.TracerPlugin;
-import org.example.agent.config.AgentConfig;
 import org.example.agent.core.TraceIgnore;
 import org.example.agent.core.TraceRuntime;
-import org.example.agent.plugin.ReflectionUtils;
+import org.example.agent.core.util.ReflectionUtils;
 
 import static net.bytebuddy.matcher.ElementMatchers.*;
 

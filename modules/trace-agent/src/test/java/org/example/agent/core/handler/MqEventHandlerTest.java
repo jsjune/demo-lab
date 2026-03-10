@@ -1,8 +1,8 @@
 package org.example.agent.core.handler;
 
-import org.example.agent.core.SpanIdHolder;
-import org.example.agent.core.TcpSender;
-import org.example.agent.core.TxIdHolder;
+import org.example.agent.core.context.SpanIdHolder;
+import org.example.agent.core.emitter.TcpSender;
+import org.example.agent.core.context.TxIdHolder;
 import org.example.common.TraceEvent;
 import org.example.common.TraceEventType;
 import org.junit.jupiter.api.*;
@@ -31,6 +31,7 @@ class MqEventHandlerTest {
         });
         TxIdHolder.clear();
         SpanIdHolder.clear();
+        MqEventHandler.resetForTest();
     }
 
     @AfterEach
@@ -38,6 +39,7 @@ class MqEventHandlerTest {
         tcpMock.close();
         TxIdHolder.clear();
         SpanIdHolder.clear();
+        MqEventHandler.resetForTest();
     }
 
     @Test
@@ -125,6 +127,34 @@ class MqEventHandlerTest {
 
         assertEquals(1, capturedEvents.size());
         assertEquals(TraceEventType.MQ_CONSUME_END, capturedEvents.get(0).type());
+    }
+
+    @Test
+    @DisplayName("T-04-3: onConsumeError 후 onConsumeComplete — 중복 이벤트 없음")
+    void onConsumeError_thenComplete_noDuplicate() {
+        MqEventHandler.onConsumeStart("kafka", "my-topic", "tx-001");
+        capturedEvents.clear();
+
+        MqEventHandler.onConsumeError(new RuntimeException("err"), "kafka", "my-topic", 50L);
+        MqEventHandler.onConsumeComplete("kafka", "my-topic", 99L);
+
+        assertEquals(1, capturedEvents.size(), "onConsumeComplete after onConsumeError must not emit a second MQ_CONSUME_END");
+        assertEquals(TraceEventType.MQ_CONSUME_END, capturedEvents.get(0).type());
+        assertFalse(capturedEvents.get(0).success());
+    }
+
+    @Test
+    @DisplayName("T-04-4: onConsumeEnd 후 onConsumeError — 중복 이벤트 없음")
+    void onConsumeEnd_thenError_noDuplicate() {
+        MqEventHandler.onConsumeStart("kafka", "my-topic", "tx-001");
+        capturedEvents.clear();
+
+        MqEventHandler.onConsumeEnd("kafka", "my-topic", 100L);
+        MqEventHandler.onConsumeError(new RuntimeException("late-err"), "kafka", "my-topic", 200L);
+
+        assertEquals(1, capturedEvents.size(), "onConsumeError after onConsumeEnd must not emit a second MQ_CONSUME_END");
+        assertEquals(TraceEventType.MQ_CONSUME_END, capturedEvents.get(0).type());
+        assertTrue(capturedEvents.get(0).success());
     }
 
     @Test
