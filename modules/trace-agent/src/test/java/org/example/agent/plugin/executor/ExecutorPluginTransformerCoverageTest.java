@@ -3,7 +3,9 @@ package org.example.agent.plugin.executor;
 import org.example.agent.core.ContextCapturingCallable;
 import org.example.agent.core.ContextCapturingRunnable;
 import org.example.agent.core.TraceRuntime;
+import org.example.agent.core.context.AsyncTaskNameHolder;
 import org.example.agent.instrumentation.ByteBuddyIntegrationTest;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 
@@ -64,6 +66,11 @@ class ExecutorPluginTransformerCoverageTest extends ByteBuddyIntegrationTest {
         assertInstanceOf(ContextCapturingCallable.class, capturedCallable);
     }
 
+    @AfterEach
+    void clearHolder() {
+        AsyncTaskNameHolder.clear();
+    }
+
     @Test
     void asyncErrorAdvice_callsOnAsyncError() {
         try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
@@ -71,6 +78,31 @@ class ExecutorPluginTransformerCoverageTest extends ByteBuddyIntegrationTest {
             ExecutorPlugin.AsyncErrorAdvice.enter(err);
             rt.verify(() -> TraceRuntime.onAsyncError(eq(err)), times(1));
         }
+    }
+
+    @Test
+    void asyncDetermineExecutorAdvice_enter_setsTaskName() throws Exception {
+        Method method = DummyAsyncService.class.getDeclaredMethod("processOrder");
+
+        ExecutorPlugin.AsyncDetermineExecutorAdvice.enter(method);
+
+        assertEquals("DummyAsyncService.processOrder", AsyncTaskNameHolder.get());
+    }
+
+    @Test
+    void asyncDetermineExecutorAdvice_enter_ignoresNonMethod_doesNotThrow() {
+        assertDoesNotThrow(() -> ExecutorPlugin.AsyncDetermineExecutorAdvice.enter("not-a-method"));
+        assertNull(AsyncTaskNameHolder.get());
+    }
+
+    @Test
+    void contextCapturingRunnable_consumesTaskNameFromHolder() throws Exception {
+        AsyncTaskNameHolder.set("DummyAsyncService.processOrder");
+
+        ContextCapturingRunnable wrapper = new ContextCapturingRunnable(() -> {});
+
+        // Holder must be cleared (consumed) after constructor
+        assertNull(AsyncTaskNameHolder.get(), "getAndClear() must clear the holder");
     }
 
     // -----------------------------------------------------------------------
@@ -85,5 +117,9 @@ class ExecutorPluginTransformerCoverageTest extends ByteBuddyIntegrationTest {
     public static class DummySubmitter {
         public java.util.concurrent.Callable<?> captured;
         public <T> void submit(java.util.concurrent.Callable<T> c) { this.captured = c; }
+    }
+
+    public static class DummyAsyncService {
+        public void processOrder() {}
     }
 }

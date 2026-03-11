@@ -27,6 +27,16 @@ public class AsyncService {
         log.info("[ASYNC-TEST] Executing async task for label: {}", label);
         List<User> all = userRepository.findAll();
         log.info("[ASYNC-TEST] Found {} users in background thread", all.size());
+//        webClient.get()
+//                .uri(uriBuilder -> uriBuilder
+//                        .scheme("http")
+//                        .host("localhost")
+//                        .port(8002)
+//                        .path("/flux/test")
+//                        .build())
+//                .retrieve()
+//                .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+//                .toFuture();
         throw new IllegalAccessException("Intentional exception from async task: " + label);
     }
 

@@ -10,6 +10,7 @@ import org.example.agent.config.AgentConfig;
 import org.example.agent.core.ContextCapturingCallable;
 import org.example.agent.core.ContextCapturingRunnable;
 import org.example.agent.core.TraceRuntime;
+import org.example.agent.core.context.AsyncTaskNameHolder;
 
 import java.util.concurrent.Callable;
 
@@ -56,11 +57,15 @@ public class ExecutorPlugin implements TracerPlugin {
                 b.visit(Advice.to(RunnableWrappingAdvice.class, agentLocator)
                     .on((named("execute").or(nameStartsWith("external")))
                         .and(takesArgument(0, Runnable.class)))))
-            // Spring @Async error handler
+            // Spring @Async: handleError + determineAsyncExecutor (same class, chained visits)
+            // determineAsyncExecutor(Method) fires on the calling thread before execute(Runnable),
+            // so AsyncTaskNameHolder is set before ContextCapturingRunnable is constructed.
             .type(named("org.springframework.aop.interceptor.AsyncExecutionAspectSupport"))
             .transform((b, type, cl, m, pd) ->
                 b.visit(Advice.to(AsyncErrorAdvice.class, agentLocator)
-                    .on(named("handleError").and(takesArgument(0, Throwable.class)))));
+                        .on(named("handleError").and(takesArgument(0, Throwable.class))))
+                 .visit(Advice.to(AsyncDetermineExecutorAdvice.class, agentLocator)
+                        .on(named("determineAsyncExecutor"))));
     }
 
     // -----------------------------------------------------------------------
@@ -106,6 +111,29 @@ public class ExecutorPlugin implements TracerPlugin {
         @Advice.OnMethodEnter
         static void enter(@Advice.Argument(0) Throwable throwable) {
             TraceRuntime.onAsyncError(throwable);
+        }
+    }
+
+    /**
+     * Intercepts AsyncExecutionAspectSupport.determineAsyncExecutor(Method) to capture
+     * the actual @Async method name (ClassName.methodName) before the Runnable is submitted.
+     *
+     * <p>Why here instead of AsyncExecutionInterceptor.invoke():
+     * determineAsyncExecutor() is defined in AsyncExecutionAspectSupport — the same class
+     * already confirmed working for handleError(). It receives the target Method directly
+     * as argument 0, so no reflection chain is needed.
+     *
+     * <p>Timing guarantee (all on the calling thread):
+     * enter() → AsyncTaskNameHolder.set() → doSubmit() → execute(Runnable)
+     * → ContextCapturingRunnable.getAndClear() consumes the name.
+     */
+    public static class AsyncDetermineExecutorAdvice {
+        @Advice.OnMethodEnter
+        static void enter(@Advice.Argument(0) Object method) {
+            try {
+                java.lang.reflect.Method m = (java.lang.reflect.Method) method;
+                AsyncTaskNameHolder.set(m.getDeclaringClass().getSimpleName() + "." + m.getName());
+            } catch (Throwable ignored) {}
         }
     }
 }
