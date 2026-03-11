@@ -247,7 +247,7 @@ class HttpEventHandlerTest {
         MockServerWebExchange exchange = MockServerWebExchange.from(req);
         exchange.getResponse().setStatusCode(HttpStatus.OK);
 
-        HttpEventHandler.onWfStart(exchange);
+        HttpEventHandler.onWfStart(exchange, System.currentTimeMillis());
         assertEquals("tx-wf-1", TxIdHolder.get());
 
         Object wrapped = HttpEventHandler.wrapWfHandle(Mono.empty(), exchange, System.currentTimeMillis() - 5);
@@ -270,7 +270,7 @@ class HttpEventHandlerTest {
             .build();
         MockServerWebExchange exchange = MockServerWebExchange.from(req);
 
-        HttpEventHandler.onWfStart(exchange);
+        HttpEventHandler.onWfStart(exchange, System.currentTimeMillis());
         Object wrapped = HttpEventHandler.wrapWfHandle(
             Mono.error(new IllegalStateException("wf-fail")), exchange, System.currentTimeMillis() - 5);
         assertInstanceOf(Mono.class, wrapped);
@@ -352,7 +352,7 @@ class HttpEventHandlerTest {
     void onInStart_samplingFalse_skips() {
         try (MockedStatic<TxIdGenerator> gen = mockStatic(TxIdGenerator.class)) {
             gen.when(TxIdGenerator::shouldSample).thenReturn(false);
-            HttpEventHandler.onInStart(new FakeRequest(), "GET", "/sampled", null, null, false);
+            HttpEventHandler.onInStart(new FakeRequest(), "GET", "/sampled", null, null, false, System.currentTimeMillis());
             assertTrue(capturedEvents.isEmpty());
             assertNull(TxIdHolder.get());
         }
@@ -607,12 +607,12 @@ class HttpEventHandlerTest {
         @DisplayName("T-25: 동일 스레드에서 onInStart 두 번 호출 시 두 번째는 무시됨")
         void onInStart_calledTwice_secondCallDeduplicated() {
             // First call — should emit HTTP_IN_START (forceTrace=true bypasses sampling)
-            HttpEventHandler.onInStart(null, "GET", "/api", null, null, true);
+            HttpEventHandler.onInStart(null, "GET", "/api", null, null, true, System.currentTimeMillis());
             long startEventsAfterFirst = capturedEvents.stream()
                 .filter(e -> e.type() == TraceEventType.HTTP_IN_START).count();
 
             // Second call on same thread while first is "in flight"
-            HttpEventHandler.onInStart(null, "GET", "/api/duplicate", null, null, true);
+            HttpEventHandler.onInStart(null, "GET", "/api/duplicate", null, null, true, System.currentTimeMillis());
             long startEventsAfterSecond = capturedEvents.stream()
                 .filter(e -> e.type() == TraceEventType.HTTP_IN_START).count();
 
@@ -624,7 +624,7 @@ class HttpEventHandlerTest {
         @DisplayName("T-26: onInEnd 후 IN_FLIGHT 플래그 해제 — 다음 요청은 정상 추적됨")
         void onInEnd_clearsInFlightFlag_nextRequestTracked() {
             // First request lifecycle
-            HttpEventHandler.onInStart(null, "GET", "/first", null, null, true);
+            HttpEventHandler.onInStart(null, "GET", "/first", null, null, true, System.currentTimeMillis());
             String firstTxId = org.example.agent.core.context.TxIdHolder.get();
             HttpEventHandler.onInEnd("GET", "/first", 200, 10L);
 
@@ -632,7 +632,7 @@ class HttpEventHandlerTest {
                 .filter(e -> e.type() == TraceEventType.HTTP_IN_START).count();
 
             // Second request on same thread — flag must be cleared by onInEnd
-            HttpEventHandler.onInStart(null, "GET", "/second", null, null, true);
+            HttpEventHandler.onInStart(null, "GET", "/second", null, null, true, System.currentTimeMillis());
             long startAfterSecond = capturedEvents.stream()
                 .filter(e -> e.type() == TraceEventType.HTTP_IN_START).count();
 

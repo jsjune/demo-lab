@@ -101,12 +101,15 @@ public class HttpPlugin implements TracerPlugin {
         static void enter(
             @Advice.Argument(0) Object request,
             @Advice.Local("startTime") long startTime,
-            @Advice.Local("isTracked") boolean isTracked
+            @Advice.Local("isTracked") boolean isTracked,
+            @Advice.Local("isSecondary") boolean isSecondary
         ) {
             startTime = System.currentTimeMillis();
             isTracked = true;
+            isSecondary = false;
 
             if (TraceRuntime.isSecondaryDispatch(request)) {
+                isSecondary = true;
                 if (TraceRuntime.isErrorDispatch(request)) {
                     isTracked = false;
                     return;
@@ -125,7 +128,8 @@ public class HttpPlugin implements TracerPlugin {
                 HttpPlugin.getRequestURI(request),
                 HttpPlugin.getRequestHeader(request, AgentConfig.getHeaderKey()),
                 HttpPlugin.getRequestHeader(request, AgentConfig.getSpanHeaderKey()),
-                forceTrace
+                forceTrace,
+                startTime
             );
         }
 
@@ -135,9 +139,18 @@ public class HttpPlugin implements TracerPlugin {
             @Advice.Argument(1) Object response,
             @Advice.Thrown Throwable thrown,
             @Advice.Local("startTime") long startTime,
-            @Advice.Local("isTracked") boolean isTracked
+            @Advice.Local("isTracked") boolean isTracked,
+            @Advice.Local("isSecondary") boolean isSecondary
         ) {
             if (!isTracked) return;
+
+            // 2차 dispatch (ASYNC): AsyncListener.onComplete 가 HTTP_IN_END 를 담당 → 여기서는 스킵
+            if (isSecondary) {
+                TxIdHolder.clear();
+                SpanIdHolder.clear();
+                return;
+            }
+
             long durationMs = System.currentTimeMillis() - startTime;
 
             if (thrown != null) {
@@ -173,7 +186,7 @@ public class HttpPlugin implements TracerPlugin {
             @Advice.Local("startTime") long startTime
         ) {
             startTime = System.currentTimeMillis();
-            TraceRuntime.onWebFluxHandleStart(exchange);
+            TraceRuntime.onWebFluxHandleStart(exchange, startTime);
         }
 
         @Advice.OnMethodExit(onThrowable = Throwable.class)

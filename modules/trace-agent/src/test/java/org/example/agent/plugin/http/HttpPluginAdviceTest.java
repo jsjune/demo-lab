@@ -59,9 +59,9 @@ class HttpPluginAdviceTest {
                 hp.when(() -> HttpPlugin.getRequestHeader(any(), anyString())).thenReturn(null);
 
                 Object fakeRequest = new Object();
-                HttpPlugin.DispatcherServletAdvice.enter(fakeRequest, 0L, false);
+                HttpPlugin.DispatcherServletAdvice.enter(fakeRequest, 0L, false, false);
 
-                rt.verify(() -> TraceRuntime.onHttpInStart(eq(fakeRequest), eq("GET"), eq("/api/test"), isNull(), isNull(), eq(false)), times(1));
+                rt.verify(() -> TraceRuntime.onHttpInStart(eq(fakeRequest), eq("GET"), eq("/api/test"), isNull(), isNull(), eq(false), anyLong()), times(1));
             }
         }
 
@@ -74,9 +74,9 @@ class HttpPluginAdviceTest {
                 rt.when(() -> TraceRuntime.restoreContext(any())).thenAnswer(inv -> null);
 
                 Object fakeRequest = new Object();
-                HttpPlugin.DispatcherServletAdvice.enter(fakeRequest, 0L, false);
+                HttpPlugin.DispatcherServletAdvice.enter(fakeRequest, 0L, false, false);
 
-                rt.verify(() -> TraceRuntime.onHttpInStart(any(), any(), any(), any(), any(), anyBoolean()), never());
+                rt.verify(() -> TraceRuntime.onHttpInStart(any(), any(), any(), any(), any(), anyBoolean(), anyLong()), never());
             }
         }
 
@@ -90,10 +90,10 @@ class HttpPluginAdviceTest {
                 Object fakeRequest = new Object();
                 boolean[] isTracked = {true};
                 // enter() returns isTracked via @Advice.Local — simulate by verifying no restoreContext or onHttpInStart
-                HttpPlugin.DispatcherServletAdvice.enter(fakeRequest, 0L, false);
+                HttpPlugin.DispatcherServletAdvice.enter(fakeRequest, 0L, false, false);
 
                 rt.verify(() -> TraceRuntime.restoreContext(any()), never());
-                rt.verify(() -> TraceRuntime.onHttpInStart(any(), any(), any(), any(), any(), anyBoolean()), never());
+                rt.verify(() -> TraceRuntime.onHttpInStart(any(), any(), any(), any(), any(), anyBoolean(), anyLong()), never());
             }
         }
 
@@ -107,7 +107,7 @@ class HttpPluginAdviceTest {
                 hp.when(() -> HttpPlugin.getRequestURI(any())).thenReturn("/fail");
 
                 Throwable err = new RuntimeException("boom");
-                HttpPlugin.DispatcherServletAdvice.exit(new Object(), new Object(), err, 100L, true);
+                HttpPlugin.DispatcherServletAdvice.exit(new Object(), new Object(), err, 100L, true, false);
 
                 rt.verify(() -> TraceRuntime.onHttpInError(eq(err), eq("POST"), eq("/fail"), anyLong()), times(1));
                 rt.verify(() -> TraceRuntime.onHttpInEnd(any(), any(), anyInt(), anyLong()), never());
@@ -125,7 +125,7 @@ class HttpPluginAdviceTest {
                 hp.when(() -> HttpPlugin.isAsyncStarted(any())).thenReturn(false);
                 hp.when(() -> HttpPlugin.getResponseStatus(any())).thenReturn(200);
 
-                HttpPlugin.DispatcherServletAdvice.exit(new Object(), new Object(), null, 100L, true);
+                HttpPlugin.DispatcherServletAdvice.exit(new Object(), new Object(), null, 100L, true, false);
 
                 rt.verify(() -> TraceRuntime.onHttpInEnd(eq("GET"), eq("/ok"), eq(200), anyLong()), times(1));
             }
@@ -135,7 +135,17 @@ class HttpPluginAdviceTest {
         @DisplayName("exit: isTracked=false → 아무것도 호출되지 않아야 한다")
         void exit_notTracked_skipsAll() {
             try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
-                HttpPlugin.DispatcherServletAdvice.exit(new Object(), new Object(), null, 100L, false);
+                HttpPlugin.DispatcherServletAdvice.exit(new Object(), new Object(), null, 100L, false, false);
+                rt.verify(() -> TraceRuntime.onHttpInEnd(any(), any(), anyInt(), anyLong()), never());
+                rt.verify(() -> TraceRuntime.onHttpInError(any(), any(), any(), anyLong()), never());
+            }
+        }
+
+        @Test
+        @DisplayName("exit: isSecondary=true → HTTP_IN_END 미호출 (AsyncListener가 담당)")
+        void exit_secondaryDispatch_skipsHttpInEnd() {
+            try (MockedStatic<TraceRuntime> rt = mockStatic(TraceRuntime.class)) {
+                HttpPlugin.DispatcherServletAdvice.exit(new Object(), new Object(), null, 100L, true, true);
                 rt.verify(() -> TraceRuntime.onHttpInEnd(any(), any(), anyInt(), anyLong()), never());
                 rt.verify(() -> TraceRuntime.onHttpInError(any(), any(), any(), anyLong()), never());
             }

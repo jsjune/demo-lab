@@ -50,7 +50,8 @@ public final class HttpEventHandler {
     // ── HTTP Inbound ──────────────────────────────────────────────────────
 
     public static void onInStart(Object request, String method, String path,
-                          String incomingTxId, String incomingSpanId, boolean forceTrace) {
+                          String incomingTxId, String incomingSpanId, boolean forceTrace,
+                          long requestStartTime) {
         String inFlightTx = HTTP_IN_FLIGHT_TX.get();
         if (inFlightTx != null) {
             String currentTx = TxIdHolder.get();
@@ -58,10 +59,9 @@ public final class HttpEventHandler {
             HTTP_IN_FLIGHT_TX.remove();                  // stale flag from a previous request
         }
         TraceRuntime.safeRun(() -> {
-            long now = System.currentTimeMillis();
             if (request != null) {
                 TraceRuntime.invokeSetAttribute(request, TraceRuntime.TRACE_MARKER, Boolean.TRUE);
-                TraceRuntime.invokeSetAttribute(request, HTTP_ATTR_START_TIME, now);
+                TraceRuntime.invokeSetAttribute(request, HTTP_ATTR_START_TIME, requestStartTime);
                 TraceRuntime.invokeSetAttribute(request, HTTP_ATTR_METHOD, method);
                 TraceRuntime.invokeSetAttribute(request, HTTP_ATTR_PATH, path);
                 TraceRuntime.invokeSetAttribute(request, HTTP_ATTR_FINISHED, Boolean.FALSE);
@@ -102,7 +102,7 @@ public final class HttpEventHandler {
                     + " method=" + method + " path=" + path
                     + " incomingTxId=" + incomingTxId + " incomingSpanId=" + incomingSpanId);
                 TraceRuntime.emitEvent(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_IN_START, TraceCategory.HTTP,
-                        method + " " + path, null, true, null, spanId, incomingSpanId));
+                        method + " " + path, null, true, null, spanId, incomingSpanId, requestStartTime));
             }
         });
     }
@@ -277,6 +277,8 @@ public final class HttpEventHandler {
     // ── HTTP Outbound ──────────────────────────────────────────────────────
 
     public static void onOut(String method, String uri, int statusCode, long durationMs) {
+        // timestamp = 요청 전송 시점 (현재 시각 - 소요 시간으로 역산)
+        long startTime = System.currentTimeMillis() - durationMs;
         TraceRuntime.safeRun(() -> {
             String txId = TxIdHolder.get(); if (txId == null) return;
             Map<String, Object> extra = new HashMap<>();
@@ -284,12 +286,15 @@ public final class HttpEventHandler {
             AgentLogger.debug("[TRACE][HTTP][HTTP_OUT] txId=" + txId
                 + " method=" + method + " uri=" + uri + " statusCode=" + statusCode
                 + " durationMs=" + durationMs + " success=" + (statusCode >= 200 && statusCode < 400));
-            TraceRuntime.emitEvent(TraceRuntime.createChildEvent(txId, TraceEventType.HTTP_OUT,
-                    TraceCategory.HTTP, uri, durationMs, statusCode >= 200 && statusCode < 400, extra));
+            TraceRuntime.emitEvent(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_OUT,
+                    TraceCategory.HTTP, uri, durationMs, statusCode >= 200 && statusCode < 400, extra,
+                    TraceRuntime.generateSpanId(), SpanIdHolder.get(), startTime));
         });
     }
 
     public static void onOutError(Throwable t, String method, String url, long durationMs) {
+        // timestamp = 요청 전송 시점 (현재 시각 - 소요 시간으로 역산)
+        long startTime = System.currentTimeMillis() - durationMs;
         TraceRuntime.safeRun(() -> {
             String txId = TxIdHolder.get(); if (txId == null) return;
             Map<String, Object> extra = new LinkedHashMap<>();
@@ -300,8 +305,9 @@ public final class HttpEventHandler {
                 + " method=" + method + " uri=" + url + " durationMs=" + durationMs
                 + " success=false errorType=" + extra.get("errorType")
                 + " errorMessage=" + extra.get("errorMessage"));
-            TraceRuntime.emitEvent(TraceRuntime.createChildEvent(txId, TraceEventType.HTTP_OUT,
-                    TraceCategory.HTTP, url, durationMs, false, extra));
+            TraceRuntime.emitEvent(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_OUT,
+                    TraceCategory.HTTP, url, durationMs, false, extra,
+                    TraceRuntime.generateSpanId(), SpanIdHolder.get(), startTime));
         });
     }
 
@@ -317,11 +323,11 @@ public final class HttpEventHandler {
             Consumer<Object> successConsumer = response -> {
                 long durationMs = System.currentTimeMillis() - startTime;
                 int statusCode = extractStatusCode(response);
-                emitHttpOutWithSpan(capturedTxId, capturedSpanId, method, uri, statusCode, durationMs, null);
+                emitHttpOutWithSpan(capturedTxId, capturedSpanId, method, uri, statusCode, durationMs, null, startTime);
             };
             Consumer<Throwable> errorConsumer = err -> {
                 long durationMs = System.currentTimeMillis() - startTime;
-                emitHttpOutWithSpan(capturedTxId, capturedSpanId, method, uri, -1, durationMs, err);
+                emitHttpOutWithSpan(capturedTxId, capturedSpanId, method, uri, -1, durationMs, err, startTime);
             };
 
             Method doOnSuccess = MONO_DO_ON_SUCCESS_CACHE.get(mono.getClass());
@@ -333,7 +339,7 @@ public final class HttpEventHandler {
         } catch (Throwable t) { return mono; }
     }
 
-    public static void onWfStart(Object exchange) {
+    public static void onWfStart(Object exchange, long startTime) {
         TraceRuntime.safeRun(() -> {
             Object request = resolveAndInvoke(WF_GET_REQUEST_CACHE, exchange);
             if (request == null) return;
@@ -352,7 +358,7 @@ public final class HttpEventHandler {
                     inSpanId = (String) getFirst.invoke(headers, AgentConfig.getSpanHeaderKey());
                 } catch (Throwable ignored) {}
             }
-            onInStart(request, method, path, inTxId, inSpanId, false);
+            onInStart(request, method, path, inTxId, inSpanId, false, startTime);
         });
     }
 
@@ -415,7 +421,8 @@ public final class HttpEventHandler {
     }
 
     private static void emitHttpOutWithSpan(String txId, String parentSpanId, String method,
-                                            String uri, int statusCode, long durationMs, Throwable cause) {
+                                            String uri, int statusCode, long durationMs, Throwable cause,
+                                            long startTime) {
         TraceRuntime.safeRun(() -> {
             boolean success = statusCode >= 200 && statusCode < 400 && cause == null;
             Map<String, Object> extra = new LinkedHashMap<>();
@@ -425,7 +432,7 @@ public final class HttpEventHandler {
                 extra.put("errorMessage", cause.getMessage() != null ? cause.getMessage() : "");
             }
             TraceRuntime.emitEvent(TraceRuntime.buildEvent(txId, TraceEventType.HTTP_OUT, TraceCategory.HTTP,
-                    uri, durationMs, success, extra, TraceRuntime.generateSpanId(), parentSpanId));
+                    uri, durationMs, success, extra, TraceRuntime.generateSpanId(), parentSpanId, startTime));
         });
     }
 

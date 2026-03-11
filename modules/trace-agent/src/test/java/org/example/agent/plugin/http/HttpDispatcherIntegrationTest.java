@@ -65,7 +65,7 @@ class HttpDispatcherIntegrationTest extends ByteBuddyIntegrationTest {
             doDispatch.invoke(instance, request, response);
 
             runtimeMock.verify(
-                () -> TraceRuntime.onHttpInStart(eq(request), eq("GET"), eq("/test"), isNull(), isNull(), eq(false)),
+                () -> TraceRuntime.onHttpInStart(eq(request), eq("GET"), eq("/test"), isNull(), isNull(), eq(false), anyLong()),
                 times(1)
             );
             runtimeMock.verify(
@@ -96,7 +96,7 @@ class HttpDispatcherIntegrationTest extends ByteBuddyIntegrationTest {
             doDispatch.invoke(instance, request, response);
 
             runtimeMock.verify(
-                () -> TraceRuntime.onHttpInStart(any(Object.class), anyString(), anyString(), anyString(), anyString(), anyBoolean()),
+                () -> TraceRuntime.onHttpInStart(any(Object.class), anyString(), anyString(), anyString(), anyString(), anyBoolean(), anyLong()),
                 never()
             );
         }

@@ -83,7 +83,8 @@ public class TraceRuntime {
     }
 
     // ── ABI: HTTP ─────────────────────────────────────────────────────────
-    public static void onHttpInStart(Object req, String m, String p, String txId, String sid, boolean f) { HttpEventHandler.onInStart(req, m, p, txId, sid, f); }
+    public static void onHttpInStart(Object req, String m, String p, String txId, String sid, boolean f) { HttpEventHandler.onInStart(req, m, p, txId, sid, f, System.currentTimeMillis()); }
+    public static void onHttpInStart(Object req, String m, String p, String txId, String sid, boolean f, long t) { HttpEventHandler.onInStart(req, m, p, txId, sid, f, t); }
     public static void onHttpInEnd(String m, String p, int sc, long ms)                                   { HttpEventHandler.onInEnd(m, p, sc, ms); }
     public static void onHttpInEndAsync(String tx, String sid, String m, String p, long st, Object req)   { HttpEventHandler.onInEndAsync(tx, sid, m, p, st, req, "onComplete", null); }
     public static void onHttpInError(Throwable t, String m, String p, long ms)                            { HttpEventHandler.onInError(t, m, p, ms); }
@@ -92,7 +93,8 @@ public class TraceRuntime {
     public static void onHttpOut(String m, String uri, int sc, long ms)                                   { HttpEventHandler.onOut(m, uri, sc, ms); }
     public static void onHttpOutError(Throwable t, String m, String url, long ms)                         { HttpEventHandler.onOutError(t, m, url, ms); }
     public static Object wrapWebClientExchange(Object mono, String m, String uri)                         { return HttpEventHandler.wrapWebClient(mono, m, uri); }
-    public static void onWebFluxHandleStart(Object ex)                                                     { HttpEventHandler.onWfStart(ex); }
+    public static void onWebFluxHandleStart(Object ex)                                                     { HttpEventHandler.onWfStart(ex, System.currentTimeMillis()); }
+    public static void onWebFluxHandleStart(Object ex, long t)                                             { HttpEventHandler.onWfStart(ex, t); }
     public static Object wrapWebFluxHandle(Object mono, Object ex, long t)                                 { return HttpEventHandler.wrapWfHandle(mono, ex, t); }
     public static void onWebFluxHandleSyncError()                                                          { HttpEventHandler.onWfSyncError(); }
 
@@ -192,6 +194,17 @@ public class TraceRuntime {
         return new TraceEvent(AgentConfig.getServerName() + "-" + EVENT_SEQ.incrementAndGet(),
                 txId, spanId, parentSpanId, type, category, AgentConfig.getServerName(),
                 target, durationMs, success, System.currentTimeMillis(),
+                extra != null ? extra : new HashMap<>());
+    }
+
+    /** timestamp를 명시적으로 지정하는 오버로드 — HTTP_OUT 등 요청 전송 시점을 정확히 기록할 때 사용 */
+    public static TraceEvent buildEvent(String txId, TraceEventType type, TraceCategory category,
+                                 String target, Long durationMs, boolean success,
+                                 Map<String, Object> extra, String spanId, String parentSpanId,
+                                 long timestamp) {
+        return new TraceEvent(AgentConfig.getServerName() + "-" + EVENT_SEQ.incrementAndGet(),
+                txId, spanId, parentSpanId, type, category, AgentConfig.getServerName(),
+                target, durationMs, success, timestamp,
                 extra != null ? extra : new HashMap<>());
     }
 
